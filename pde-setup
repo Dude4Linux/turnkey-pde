@@ -1,0 +1,347 @@
+#! /bin/bash
+# ---------------------------------------------------------------------------
+# pde-setup - Install TurnKey Portable Development Environment (PDE)
+
+# Copyright 2018, John Carver <dude4linux@gmail.com>
+  
+  # This program is free software: you can redistribute it and/or modify
+  # it under the terms of the GNU General Public License as published by
+  # the Free Software Foundation, either version 3 of the License, or
+  # (at your option) any later version.
+
+  # This program is distributed in the hope that it will be useful,
+  # but WITHOUT ANY WARRANTY; without even the implied warranty of
+  # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  # GNU General Public License at (http://www.gnu.org/licenses/) for
+  # more details.
+
+# Usage: pde-setup [-h|--help] [-f|--force]
+
+# Revision history:
+# 2018-01-11 Created by new-script ver. 3.1
+# 2018-02-06 Released version 1.0
+# ---------------------------------------------------------------------------
+
+PROGNAME=${0##*/}
+BASEDIR=$(dirname $0)
+VERSION="1.0"
+
+info() { echo "INFO [$(basename $0)]: $@"; }
+warn() { echo "WARN [$(basename $0)]: $@" 1>&2; return 1; }
+fatal() { echo "FATAL [$(basename $0)]: $@" 1>&2; exit 1; }
+
+clean_up() { # Perform pre-exit housekeeping
+  return
+}
+
+error_exit() {
+  echo -e "${PROGNAME}: ${1:-"Unknown Error"}" >&2
+  clean_up
+  exit 1
+}
+
+graceful_exit() {
+  clean_up
+  exit
+}
+
+signal_exit() { # Handle trapped signals
+  case $1 in
+    INT)    error_exit "Program interrupted by user" ;;
+    TERM)   echo -e "\n$PROGNAME: Program terminated" >&2 ; graceful_exit ;;
+    *)      error_exit "$PROGNAME: Terminating on unknown signal" ;;
+  esac
+}
+
+usage() {
+  echo -e "Usage: $PROGNAME [-h|--help] [-f|--force]"
+}
+
+help_message() {
+	cat <<- _EOF_
+	$PROGNAME ver. $VERSION
+	Install TurnKey Portable Development Environment (PDE)
+
+	$(usage)
+
+	Options:
+	-h, --help	Display this help message and exit.
+	-f, --force	Force replacement of existing config files
+
+	_EOF_
+	return
+}
+
+# Trap signals
+trap "signal_exit TERM" TERM HUP
+trap "signal_exit INT"  INT
+
+# Parse command-line
+while [[ -n $1 ]]; do
+	case $1 in
+		-h | --help)	help_message; graceful_exit ;;
+		-f | --force)	FORCE=true; info "Forcing replacement of existing config files" ;;
+		-* | --*)	usage; error_exit "Unknown option $1" ;;
+		*)		echo "Argument $1 to process ..." ;;
+	esac
+	shift
+done
+
+# Main logic
+TURNKEY_VERSION="turnkey-lxc-14.2-jessie-amd64"
+DISTRIBUTOR=$(lsb_release -si)
+CODENAME=$(lsb_release -sc)
+FORCE=false
+
+# Check for Ubuntu
+[[ $DISTRIBUTOR == "Ubuntu" ]] || fatal "Currently only Ubuntu is supported by PDE"
+
+# Enable noninteractive mode
+export DEBIAN_FRONTEND=noninteractive
+
+# Enable backports
+CONF="/etc/apt/sources.list"
+if [ -e ${CONF} ]; then
+  info "Enabling ${CODENAME}-backports ..."
+  grep -q "${CODENAME}-backports" ${CONF}
+  if [ $? -eq 0 ]; then
+    # uncomment backports in sources.list
+    sudo sed -i "/${CODENAME}-backports/ s/^[# ]*//" ${CONF}
+  else
+    # add backports to sources.list
+    sudo sed -i "/\s${CODENAME}\s/{p;s/${CODENAME}/${CODENAME}-backports/}" ${CONF}
+  fi
+  sudo apt-get update --yes --quiet
+else
+  info "${CONF} not found; skipping enable ${CODENAME}-backports"
+fi
+
+# Install required packages
+sudo apt-get install --yes --quiet dnsmasq-base dnsmasq-utils
+
+#Note: Ubuntu package dnsmasq was not required.  dnsmasq-base was sufficient.
+#Package dnsmasq-utils may still be helpful.
+
+sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
+
+### Initialize LXD:
+
+sudo lxd init --auto
+lxc network create lxdbr0 \
+  ipv4.address=auto \
+  ipv4.nat=true \
+  ipv6.address=auto \
+  ipv6.nat=true
+lxc network attach-profile lxdbr0 default
+
+# Kernel Preparation:
+
+# Edit /etc/default/grub and append 'swapaccount=1' to the GRUB_CMDLINE_LINUX_DEFAULT line so it reads;
+# GRUB_CMDLINE_LINUX_DEFAULT="quiet splash swapaccount=1"
+
+CONF="/etc/default/grub"
+if [ -e ${CONF} ]; then
+  grep -q 'GRUB_CMDLINE_LINUX_DEFAULT.*swapaccount=' ${CONF}
+  if [ $? -ne 0 ]; then
+    info "Updating Grub Config"
+    sudo sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/ s/"\(.*\)"/"\1 swapaccount=1"/' ${CONF}
+    sudo update-grub
+  fi
+else
+  info "Skipping Grub Update"
+fi
+
+## Limit dhclient interfaces:
+# By default, dhclient will send DHCP-DISCOVER packets on all available interfaces. Since we will be adding a number of virtual interfaces, none of which will respond to DHCP requests, we will limit dhclient to the ethernet and wifi interfaces.
+
+CONF="/etc/dhcp/dhclient.conf"
+
+if [ -e ${CONF} ]; then
+  grep -q '# limit to interfaces' ${CONF}
+  if [ $? -ne 0 ]; then
+    info "Limiting dhclient interfaces ..."
+    LINKS=$(ip link | awk -F: '$0 !~ "lo|vi|ve|lx|^[^0-9]"{print $2}')
+    echo "# limit to interfaces" | sudo tee -a ${CONF}
+    for i in $LINKS; do
+      echo "interface \"$i\" { }" | sudo tee -a ${CONF}
+    done
+  else
+    info "Skipping dhclient configuration ..."
+  fi
+fi
+
+# Copy the TurnKey GNU/Linux template, lxc-turnkey, to the LXC templates directory.
+
+sudo cp ${BASEDIR}/lxc-turnkey /usr/share/lxc/templates/lxc-turnkey
+
+# Copy the lxd-turnkey image manager to /usr/local/bin/.
+
+sudo cp ${BASEDIR}/lxd-turnkey /usr/local/bin/lxd-turnkey
+
+# Add the TurnKey gpg release key to your keyring.
+
+gpg --keyserver hkp://keyserver.ubuntu.com --recv-keys 0xA16EB94D
+
+# Copy the TurnKey gpg release key to /etc/apt/trusted.gpg.d/
+
+sudo wget https://releases.turnkeylinux.org/release-key.txt -O /etc/apt/trusted.gpg.d/turnkey.gpg
+
+# Configure inithooks.conf
+
+# The TurnKey template, lxc-turnkey, requires an inithooks.conf and inserts it into the LXC container before startup.  We will use the inithooks example file because we will be creating sharable images and we don't want to include private passwords.  We put the default inithooks.conf in /etc where it can be read by non-privileged users.
+
+CONF="/etc/inithooks.conf"
+
+if [ ! -e ${CONF} -o ${FORCE} = true ]; then
+  info "Creating ${CONF} ..."
+  sudo cp ${BASEDIR}/inithooks.conf ${CONF}
+fi
+
+# Configure /etc/lxc/default.conf
+
+CONF="/etc/lxc/default.conf"
+
+if [ ! -e ${CONF} -o ${FORCE} = true ]; then
+  info "Creating ${CONF} ..."
+cat << EOT | sudo tee ${CONF}
+# common settings for all containers
+lxc.autodev = 1
+lxc.network.type = veth
+lxc.network.link = lxcbr0
+lxc.network.flags = up
+lxc.network.hwaddr = 00:16:3e:xx:xx:xx
+EOT
+else
+  info "Skipping ${CONF} ..."
+fi
+
+# Set default turnkey version
+
+CONF="/etc/turnkey_version"
+
+if [ ! -e ${CONF} -o ${FORCE} = true ]; then
+  info "Creating ${CONF} ..."
+  echo "${TURNKEY_VERSION}" | sudo tee ${CONF}
+else
+  info "Skipping ${CONF} ..."
+fi
+
+# Initialize LXC/LXD network vars:
+
+[ -e /etc/default/lxc-net ] && source /etc/default/lxc-net
+
+LXD_BRIDGE=$(lxc network list |  awk '/bridge.*\|.*YES/ { print $2 }')
+LXD_NETWORK=$(lxc network get $LXD_BRIDGE ipv4.address)
+LXD_ADDR=${LXD_NETWORK%/*}
+
+# Configure DnsMasq:
+
+if [ -d /etc/NetworkManager/dnsmasq.d ]; then
+  CONF="/etc/NetworkManager/dnsmasq.d/dnsmasq.conf"
+else
+  CONF="/etc/dnsmasq.d/dnsmasq.conf"
+fi
+
+if [ ! -e ${CONF} -o ${FORCE} = true ]; then
+  info "Creating ${CONF} ..."
+  cat << EOT | sudo tee ${CONF}
+# Configuration file for dnsmasq.
+# ${CONF}
+#
+bind-interfaces
+user=dnsmasq
+group=dnsmasq
+
+server=/lxd/${LXD_ADDR}
+rev-server=${LXD_NETWORK},${LXD_ADDR}
+server=/lxc/${LXC_ADDR}
+rev-server=${LXC_NETWORK},${LXC_ADDR}
+
+no-poll
+neg-ttl=3600
+cache-size=1000
+dns-forward-max=1000
+
+addn-hosts=/etc/hosts.dnsmasq
+EOT
+else
+  info "Skipping ${CONF} ..."
+fi
+
+# Harden container host using recommendations from lynis and openvas
+
+CONF="/etc/sysctl.d/90-lynis.conf"
+
+if [ ! -e ${CONF} -o ${FORCE} = true ]; then
+  info "Creating ${CONF} ..."
+  sudo cp ${BASEDIR}/90-lynis.conf ${CONF}
+  sudo service procps start
+fi
+
+# Install AppArmor profiles and utilities.
+
+sudo apt-get install --yes --quiet apparmor-profiles apparmor-utils
+
+# Create a default apparmor profile for TurnKey containers.
+
+PROFILE="/etc/apparmor.d/lxc/lxc-default-turnkey"
+
+if [ ! -e ${PROFILE} -o ${FORCE} = true ]; then
+  info "Creating ${PROFILE} ..."
+  cat << EOT | sudo tee ${PROFILE} 
+# Do not load this file.  Rather, load /etc/apparmor.d/lxc-containers, which
+# will source all profiles under /etc/apparmor.d/lxc
+
+profile lxc-default-turnkey flags=(attach_disconnected,mediate_deleted,complain) {
+  #include <abstractions/lxc/container-base>
+  #include <abstractions/lxc/start-container>
+
+  deny /dev/.lxc/proc/** rw,
+  deny /dev/.lxc/sys/** rw,
+  mount fstype=proc -> /var/cache/lxc/**,
+  mount fstype=sysfs -> /var/cache/lxc/**,
+  mount fstype=aufs -> /var/cache/lxc/**,
+  mount options=(rw,ro,bind),
+  mount fstype=cgroup -> /sys/fs/cgroup/**,
+}
+EOT
+
+# Activate the apparmor profile.
+sudo apparmor_parser -r -W -T /etc/apparmor.d/lxc-containers
+sudo service apparmor restart
+sudo aa-status
+
+else
+  info "Skipping apparmor profile ${PROFILE} ..."
+fi
+
+# Edit the default container profile. We use the default profile so we don't have to remember to specify it on the command line.
+
+cat << EOT | lxc profile edit default
+config:
+  raw.lxc: lxc.aa_profile=lxc-default-turnkey
+description: Default LXD profile
+devices:
+  console:
+    path: /dev/console
+    type: unix-char
+  eth0:
+    name: eth0
+    nictype: bridged
+    parent: lxdbr0
+    type: nic
+  fuse:
+    path: /dev/fuse
+    type: unix-char
+  loop0:
+    path: /dev/loop0
+    type: unix-block
+  root:
+    path: /
+    pool: default
+    type: disk
+name: default
+EOT
+
+graceful_exit
+

@@ -1,0 +1,715 @@
+#!/bin/bash
+
+# lxc-turnkey - Template for TurnKey GNU/Linux appliances
+#
+# lxc: linux Container library
+
+# Authors:
+# Daniel Lezcano <daniel.lezcano@free.fr>
+
+# Modified for TurnKey GNU/Linux:
+# John Carver <dude4linux@gmail.com>
+
+# Updated for TurnKey GNU/Linux version 14.2:
+# John Carver <dude4linux@gmail.com>
+
+# Updated for TurnKey GNU/Linux version 15.0:
+# John Carver <dude4linux@gmail.com>
+
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+
+# Detect use under userns (unsupported)
+for arg in "$@"; do
+    [ "$arg" = "--" ] && break
+    if [ "$arg" = "--mapped-uid" -o "$arg" = "--mapped-gid" ]; then
+        echo "This template can't be used for unprivileged containers." 1>&2
+        echo "You may want to try the \"download\" template instead." 1>&2
+        exit 1
+    fi
+done
+
+# Make sure the usual locations are in PATH
+export PATH=$PATH:/usr/sbin:/usr/bin:/sbin:/bin
+
+MIRROR=${MIRROR:-http://httpredir.debian.org/debian}
+SECURITY_MIRROR=${SECURITY_MIRROR:-http://security.debian.org/}
+TURNKEY_MIRROR=${TURNKEY_MIRROR:-http://mirror.turnkeylinux.org/turnkeylinux}
+ARCHIVE_MIRROR=${ARCHIVE_MIRROR:-http://archive.turnkeylinux.org/debian}
+LOCALSTATEDIR="/var"
+LXC_TEMPLATE_CONFIG="/usr/share/lxc/config"
+LEASES="/var/lib/misc/dnsmasq.leases"
+TMP="/tmp"
+
+info() { echo "INFO [$(basename $0)]: $@"; }
+warn() { echo "WARN [$(basename $0)]: $@" 1>&2; return 1; }
+fatal() { echo "FATAL [$(basename $0)]: $@" 1>&2; exit 1; }
+
+configure_debian() {
+    local rootfs=$1
+    local name=$2
+
+    # squeeze only has /dev/tty and /dev/tty0 by default,
+    # therefore creating missing device nodes for tty1-4.
+    for tty in $(seq 1 4); do
+        if [ ! -e ${rootfs}/dev/tty$tty ]; then
+            mknod ${rootfs}/dev/tty$tty c 4 $tty
+        fi
+    done
+
+    # configure the inittab
+    cat <<EOF > ${rootfs}/etc/inittab
+id:2:initdefault:
+si::sysinit:/etc/init.d/rcS
+l0:0:wait:/etc/init.d/rc 0
+l1:1:wait:/etc/init.d/rc 1
+l2:2:wait:/etc/init.d/rc 2
+l3:3:wait:/etc/init.d/rc 3
+l4:4:wait:/etc/init.d/rc 4
+l5:5:wait:/etc/init.d/rc 5
+l6:6:wait:/etc/init.d/rc 6
+# Normally not reached, but fallthrough in case of emergency.
+z6:6:respawn:/sbin/sulogin
+1:2345:respawn:/sbin/getty 38400 console linux
+p6::ctrlaltdel:/sbin/init 6
+p0::powerfail:/sbin/init 0
+EOF
+
+    # symlink mtab
+    [ -e "${rootfs}/etc/mtab" ] && rm ${rootfs}/etc/mtab
+    ln -s /proc/self/mounts ${rootfs}/etc/mtab
+
+    # disable selinux in debian
+    mkdir -p ${rootfs}/selinux
+    echo 0 > ${rootfs}/selinux/enforce
+
+    # always make sure resolv.conf is up to date in the target
+    cp /etc/resolv.conf ${rootfs}/etc/resolv.conf
+
+    # configure the network using the dhcp
+    cat <<EOF > ${rootfs}/etc/network/interfaces
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+hostname ${name}
+EOF
+
+    # set the hostname
+    cat <<EOF > ${rootfs}/etc/hostname
+${name}
+EOF
+
+    # reconfigure some services
+    if [ -z "$LANG" ]; then
+        chroot ${rootfs} locale-gen en_US.UTF-8 UTF-8
+        chroot ${rootfs} update-locale LANG=en_US.UTF-8
+    else
+        encoding=$(echo $LANG | cut -d. -f2)
+        chroot ${rootfs} sed -e "s/^# \(${LANG} ${encoding}\)/\1/" \
+            -i /etc/locale.gen 2> /dev/null
+        chroot ${rootfs} locale-gen $LANG $encoding
+        chroot ${rootfs} update-locale LANG=$LANG
+    fi
+
+    # disable pointless services in a container, only if they are installed
+    [ -f ${rootfs}/etc/init.d/checkroot.sh ] && chroot ${rootfs} /usr/sbin/update-rc.d -f checkroot.sh disable
+    [ -f ${rootfs}/etc/init.d/umountfs ] && chroot ${rootfs} /usr/sbin/update-rc.d -f umountfs disable
+    [ -f ${rootfs}/etc/init.d/hwclock.sh ] && chroot ${rootfs} /usr/sbin/update-rc.d -f hwclock.sh disable
+    [ -f ${rootfs}/etc/init.d/hwclockfirst.sh ] && chroot ${rootfs} /usr/sbin/update-rc.d -f hwclockfirst.sh disable
+
+    # set initial timezone as on host
+    if [ -f /etc/timezone ]; then
+        cat /etc/timezone > ${rootfs}/etc/timezone
+        chroot ${rootfs} dpkg-reconfigure -f noninteractive tzdata
+    elif [ -f /etc/sysconfig/clock ]; then
+        . /etc/sysconfig/clock
+        echo $ZONE > ${rootfs}/etc/timezone
+        chroot ${rootfs} dpkg-reconfigure -f noninteractive tzdata
+    else
+        echo "Timezone in container is not configured. Adjust it manually."
+    fi
+
+    return 0
+}
+
+write_sourceslist() {
+    local rootfs="$1";  shift
+    local release="$1"; shift
+    local arch="$1";    shift
+
+    local prefix="deb"
+    if [ -n "${arch}" ]; then
+        prefix="deb [arch=${arch}]"
+    fi
+
+    cat >> "${rootfs}/etc/apt/sources.list.d/sources.list" << EOF
+${prefix} $ARCHIVE_MIRROR ${deb_release} main
+
+${prefix} $MIRROR ${deb_release} main
+${prefix} $MIRROR ${deb_release} contrib
+#${prefix} $MIRROR ${deb_release} non-free
+EOF
+
+    cat >> "${rootfs}/etc/apt/sources.list.d/security.sources.list" << EOF
+${prefix} $ARCHIVE_MIRROR ${deb_release}-security main
+
+${prefix} $SECURITY_MIRROR ${deb_release}/updates main
+${prefix} $SECURITY_MIRROR ${deb_release}/updates contrib
+#${prefix} $SECURITY_MIRROR ${deb_release}/updates non-free
+EOF
+}
+
+configure_debian_systemd() {
+    local path=$1
+    local rootfs=$2
+
+    # this only works if we have getty@.service to manipulate
+    if [ -f ${rootfs}/lib/systemd/system/getty\@.service ]; then
+       sed -e 's/^ConditionPathExists=/# ConditionPathExists=/' \
+           -e 's/After=dev-%i.device/After=/' \
+           < ${rootfs}/lib/systemd/system/getty\@.service \
+           > ${rootfs}/etc/systemd/system/getty\@.service
+    fi
+
+    # just in case systemd is not installed
+    mkdir -p ${rootfs}/{lib,etc}/systemd/system
+    mkdir -p ${rootfs}/etc/systemd/system/getty.target.wants
+
+    # Fix getty-static-service as debootstrap does not install dbus
+    if [ -e ${rootfs}//lib/systemd/system/getty-static.service ] ; then
+        sed 's/ getty@tty[5-9].service//g' ${rootfs}/lib/systemd/system/getty-static.service |  sed 's/\(tty2-tty\)[5-9]/\14/g' > ${rootfs}/etc/systemd/system/getty-static.service
+    fi
+
+    # This function has been copied and adapted from lxc-fedora
+    rm -f ${rootfs}/etc/systemd/system/default.target
+    chroot ${rootfs} ln -s /dev/null /etc/systemd/system/udev.service
+    chroot ${rootfs} ln -s /dev/null /etc/systemd/system/systemd-udevd.service
+    chroot ${rootfs} ln -s /lib/systemd/system/multi-user.target /etc/systemd/system/default.target
+    # Make systemd honor SIGPWR
+    chroot ${rootfs} ln -s /lib/systemd/system/halt.target /etc/systemd/system/sigpwr.target
+    # Setup getty service on the 4 ttys we are going to allow in the
+    # default config.  Number should match lxc.tty
+    ( cd ${rootfs}/etc/systemd/system/getty.target.wants
+        for i in 1 2 3 4 ; do ln -sf ../getty\@.service getty@tty${i}.service; done )
+
+    return 0
+}
+
+verify_signature() {
+    local location="$1"
+    local image="$2"
+    local signature="$3"
+    local keyid="A16EB94D"
+    local keyring="/etc/apt/trusted.gpg.d/turnkey.gpg"
+
+    [ ! -f "${location}/${image}" ] && fatal "image ${location}/${image} not found"
+    [ ! -f "${location}/${signature}" ] && fatal "signature ${location}/${signature} not found"
+
+    if [[ "${image}" =~ "debian-7" ]]; then
+        info "verifying image..."
+        gpg --keyring ${keyring} --verify ${location}/${signature} ${location}/${image}
+    else
+        info "verifying gpg signature..."
+        gpg --keyring ${keyring} --verify ${location}/${signature}
+        if [ $? -ne 0 ]; then  
+            fatal "${signature} gpg verification failed"
+        fi
+
+        info "verifying checksum..."
+        cd ${location}
+        if [[ "${signature}" =~ ".sig" ]]; then
+            sum=$(grep -A 1 sha1sum ${signature} | tail -n 1 | sed "s/^ *//")
+            echo "${sum} ${image}" | sha1sum --status -c -
+            [ $? -ne 0 ] && fatal "${image} checksum verification failed"
+        elif [[ "${signature}" =~ ".hash" ]]; then
+            sha512sum --status -c "${signature}"
+            [ $? -ne 0 ] && fatal "${image} checksum verification failed"
+        else
+            fatal "${signature} unknown checksum type"
+        fi
+        cd -
+    fi
+
+    info "verified successfully"
+    return 0
+}
+
+cleanup() {
+    info "removing temporary files..."
+    rm -f ${TMP}/${image}
+    rm -f ${TMP}/${signature}
+    return 0
+}
+
+get_image_name() {
+    local deb_version=$1
+    local app_name=$2
+    local tkl_version=$3
+    local arch=$4
+
+    name="${deb_version}-turnkey-${app_name}_${tkl_version}-1_${arch}.tar.gz"
+    echo ${name}
+}
+
+download_signature() {
+    info "downloading appliance signature..."
+    wget --read-timeout=10 -t 3 -nv -c ${baseurl}/${signature} -O ${TMP}/${signature}
+    if [ $? -ne 0 ]; then
+        verify_signature ${cache} ${image} ${signature}
+    elif cmp -s "${TMP}/${signature}" "${cache}/${signature}" ; then
+        info "no change in appliance signature...using cached image..."
+        if [ -f "${cache}/${image}" ]; then
+            verify_signature ${cache} ${image} ${signature}
+        else
+            download_image
+        fi
+    else
+        download_image
+    fi
+    cleanup
+    return 0
+}
+
+download_image() {
+    # make sure that signature file has been downloaded to ${TMP}
+    [ ! -f "${TMP}/${signature}" ] && fatal "signature ${TMP}/${signature} not found"
+
+    info "downloading appliance image..."
+    wget --read-timeout=10 -t 3 -nv -c ${baseurl}/${image} -O ${TMP}/${image}
+    if [ $? -eq 0 ]; then
+        verify_signature ${TMP} ${image} ${signature}
+        mv ${TMP}/${image} ${cache}/${image}
+        mv ${TMP}/${signature} ${cache}/${signature}
+    else
+        cleanup
+        fatal "failed to download '${image}'"
+    fi
+    return 0
+}
+
+extract_image() {
+    info "extracting appliance image..."
+    mkdir -p ${rootfs}
+    tar --numeric-owner -zxf ${cache}/${image} -C ${rootfs}/
+    if [ $? -ne 0 ]; then
+        cleanup ${cache} ${image}
+        fatal "failed to extract ${image} to ${rootfs}"
+    else
+        return 0
+    fi
+}
+
+configure_turnkey() {
+    local rootfs=$1
+    local inithooks=$2
+    local aptproxy=$3
+    local stunnel_conf=${rootfs}/etc/stunnel/stunnel.conf
+
+    info "inserting inithooks.conf..."
+    cp ${inithooks} ${rootfs}/etc/inithooks.conf
+    # ensure inithooks.conf is executable by root
+    chmod 0700 ${rootfs}/etc/inithooks.conf
+
+    # remove the ntp servers; containers get time from host
+    info "disabling ntp servers..."
+    sudo sed -i '/^NTPSERVERS=/ s/".*"/""/' ${rootfs}/etc/default/ntpdate
+    
+    info "patch container for sysvinit"
+    sed -i "s/systemd/sysvinit/g" ${rootfs}/etc/init/cgmanager.conf
+    sed -i "s/systemd/sysvinit/g" ${rootfs}/etc/init.d/cgmanager
+
+    info "patch container for stunnel"
+    if ! sed -n '/^\[shellinabox\]/,/^\[/ p' ${stunnel_conf} | grep -q "TIMEOUTclose"
+    then
+      info "updating section [shellinabox]..."
+      sed -ie '/^\[shellinabox\]/,/^\[/ {
+        :a
+        n
+        /./b a
+        i\
+TIMEOUTclose = 0
+      }' ${stunnel_conf}
+    fi;
+
+    if ! sed -n '/^\[webmin\]/,$ p' ${stunnel_conf} | grep -q "TIMEOUTclose"
+    then
+      info "updating section [webmin]..."
+      sed -ie '/^\[webmin\]/,$ {
+        $ a\
+TIMEOUTclose = 0
+      }' ${stunnel_conf}
+    fi;
+
+    info "enabling rootpass inithook..."
+    chmod +x ${rootfs}/usr/lib/inithooks/firstboot.d/30rootpass
+
+    info "tagging build..."
+    version=$(cat ${rootfs}/etc/turnkey_version)
+    aptconf="Acquire::http::User-Agent \"TurnKey APT-HTTP/1.3 (${version} lxc)\";"
+    echo ${aptconf} > ${rootfs}/etc/apt/apt.conf.d/01turnkey
+
+    if [ -n "${aptproxy}" ]; then
+        info "configuring apt-proxy..."
+        aptconf="Acquire::http::Proxy \"${aptproxy}\";"
+        echo ${aptconf} > ${rootfs}/etc/apt/apt.conf.d/01proxy
+    fi
+
+    ## Security Hardening
+    # apply changes recommended by lynis and openVAS
+    # these changes can be removed after they have been applied upstream
+
+    info "security hardening..."
+
+    # Kernel Hardening
+    # LXC containers use the host kernel, therefore changes
+    # to /etc/sysctl.conf in the container are ignored
+    # Kernel hardening must be applied to the host's /etc/sysctl.conf
+
+    # ssh hardening
+    info "hardening ssh..."
+    SSH_DIR="${rootfs}/root/.ssh"
+    if [ -d ${SSH_DIR} ]; then
+      chmod -R g-rwx,o-rwx ${SSH_DIR}
+    fi
+
+    CONF="${rootfs}/etc/ssh/sshd_config"
+    if [ -e ${CONF} ]; then
+      sed -i '{
+        /^UsePrivilegeSeparation/ s/yes/sandbox/
+        /^X11Forwarding/ s/yes/no/
+        /^TCPKeepAlive/ s/yes/no/
+        /^UsePrivilegeSeparation/ a\
+\
+# SSH hardening recommended by lynis\
+AllowTcpForwarding no\
+ClientAliveCountMax 2\
+MaxAuthTries 2\
+MaxSessions 2
+      }'  ${CONF}
+    fi
+
+    # postfix banner
+    CONF="${rootfs}/etc/postfix/main.cf"
+    if [ -e ${CONF} ]; then
+      info "hardening postfix banner"
+      sed -i '/^smtpd_banner/ s/=.*$/= \$myhostname ESMTP/' ${CONF}
+    fi
+
+    # umask defaults
+    info "hardening umask defaults"
+    CONF="${rootfs}/etc/login.defs"
+    if [ -e ${CONF} ]; then
+      sed -i '/^UMASK/ s/[[:digit:]]\+/027/' ${CONF}
+    fi
+
+    CONF="${rootfs}/etc/init.d/rc"
+    if [ -e ${CONF} ]; then
+      sed -i '/^umask/ s/[[:digit:]]\+/027/' ${CONF}
+    fi
+
+    # Some older images need newer versions of dpkg to support multiarch
+    DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy update
+    DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy install --force-yes --no-install-recommends dpkg debian-archive-keyring
+
+    # Purge any config files from removed packages
+    REMOVED=$( chroot ${rootfs} dpkg -l | awk '/^rc/ {print $2}' )
+    DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy purge ${REMOVED}
+
+    # Remove old, unneeded packages
+    DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy autoremove --purge
+    DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy autoclean
+}
+
+install_turnkey() {
+
+    mkdir -p $LOCALSTATEDIR/lock/subsys/
+    (
+        flock -x 9
+        if [ $? -ne 0 ]; then
+            info "cache repository is busy."
+            return 1
+        fi
+
+        download_signature
+        extract_image
+
+        return 0
+
+        ) 9>$LOCALSTATEDIR/lock/subsys/lxc-turnkey
+
+    return $?
+}
+
+copy_configuration() {
+    local path=$1
+    local rootfs=$2
+    local name=$3
+    local arch=$4
+
+    # Generate the configuration file
+    ## Create the fstab (empty by default)
+    touch $path/fstab
+
+    ## Add all the includes
+    echo "" >> ${path}/config
+    echo "# Common configuration" >> ${path}/config
+    if [ -e "${LXC_TEMPLATE_CONFIG}/turnkey.common.conf" ]; then
+        echo "lxc.include = ${LXC_TEMPLATE_CONFIG}/turnkey.common.conf" >> ${path}/config
+    fi
+    if [ -e "${LXC_TEMPLATE_CONFIG}/turnkey.${deb_release}.conf" ]; then
+        echo "lxc.include = ${LXC_TEMPLATE_CONFIG}/turnkey.${deb_release}.conf" >> ${path}/config
+    fi
+
+    ## Add the container-specific config
+    echo "" >> ${path}/config
+    echo "# Container specific configuration" >> ${path}/config
+    grep -q "^lxc.rootfs" ${path}/config 2> /dev/null || echo "lxc.rootfs = ${rootfs}" >> ${path}/config
+
+    cat <<EOF >> ${path}/config
+lxc.mount.auto = cgroup:mixed
+lxc.mount = ${path}/fstab
+lxc.utsname = ${name}
+lxc.arch = ${arch}
+EOF
+
+    # if there is exactly one veth network entry, make sure it has an
+    # associated hwaddr.
+    nics=`grep -e '^lxc\.network\.type[ \t]*=[ \t]*veth' ${path}/config | wc -l`
+    if [ $nics -eq 1 ]; then
+        grep -q "^lxc.network.hwaddr" ${path}/config || sed -i -e "/^lxc\.network\.type[ \t]*=[ \t]*veth/a lxc.network.hwaddr = 2a:5b:8e:$(openssl rand -hex 3| sed 's/\(..\)/\1:/g; s/.$//')" ${path}/config
+    fi
+
+    [ ! -f ${path}/config ] && warn "failed to add configuration"
+
+    return 0
+}
+
+post_process() {
+    local rootfs="$1";  shift
+    local release="$1"; shift
+    local arch="$1"; shift
+    local hostarch="$1"; shift
+
+    # Disable service startup
+    cat > ${rootfs}/usr/sbin/policy-rc.d << EOF
+#!/bin/sh
+exit 101
+EOF
+    chmod +x ${rootfs}/usr/sbin/policy-rc.d
+
+    # Clear existing sources.list
+    > ${rootfs}/etc/apt/sources.list.d/sources.list
+    > ${rootfs}/etc/apt/sources.list.d/security.sources.list
+
+    # If the container isn't running a native architecture, setup multiarch
+    if [ "${arch}" != "${hostarch}" ]; then
+        # Test if dpkg supports multiarch
+        if ! chroot $rootfs dpkg --print-foreign-architectures 2>&1; then
+            chroot ${rootfs} dpkg --add-architecture ${hostarch}
+            # Write a new sources.list containing multiarch entries
+            write_sourceslist ${rootfs} ${deb_release} ${arch}
+            write_sourceslist ${rootfs} ${deb_release} ${hostarch}
+        else
+            # Write a new sources.list containing native entries
+            write_sourceslist ${rootfs} ${deb_release}
+        fi
+    else
+        # Write a new sources.list containing native entries
+        write_sourceslist ${rootfs} ${deb_release}
+    fi
+
+    # Re-enable service startup
+    rm ${rootfs}/usr/sbin/policy-rc.d
+
+    return 0
+}
+
+clean() {
+    if [ ! -e ${cache} ]; then
+        exit 0
+    fi
+
+    # lock, so we won't purge while someone is creating a repository
+    (
+        flock -x 9
+        if [ $? != 0 ]; then
+            echo "Cache repository is busy."
+            exit 1
+        fi
+
+        echo -n "Purging the download cache..."
+        rm --preserve-root --one-file-system -rf ${cache} && echo "Done." || exit 1
+        exit 0
+
+    ) 9>$LOCALSTATEDIR/lock/subsys/lxc-turnkey
+}
+
+usage() {
+cat <<EOF
+TurnKey LXC Template Syntax: appname [options]
+
+Arguments::
+
+    appname          Appliance name (e.g., core)
+
+Options::
+
+    -a --arch=       Appliance architecture (default: hosts architecture)
+    -v --version=    Appliance version (default: ${def_ver})
+    -x --aptproxy=   Address of APT Proxy (e.g., http://192.168.121.1:3142)
+
+    -i --inithooks=  Path to inithooks.conf (default: /root/inithooks.conf)
+                     Reference: https://www.turnkeylinux.org/docs/inithooks
+
+       --rootfs=     Path to root filesystem (default: \$path/\$name/rootfs)
+    -c --clean       Clean the cache i.e. purge all downloaded appliance images
+
+Required options (passed automatically by lxc-create):
+
+    -n --name=       container name (\$name)
+    -p --path=       container path_name (\$path/\$name)
+
+Example usage::
+
+    lxc-create -n core -f /etc/lxc/bridge.conf -t turnkey -- core -i /root/inithooks.conf
+
+EOF
+    exit 1
+}
+
+S_OPTS="hp:n:a:v:i:x:c"
+L_OPTS="help,rootfs:,path:,name:,arch:,version:,inithooks:,aptproxy:,clean"
+OPTIONS=$(getopt -o $S_OPTS -l $L_OPTS -- "$@")
+[ $? -ne 0 ] && usage
+eval set -- "$OPTIONS"
+
+# default app (core)
+app_name="core"
+arch=$(dpkg --print-architecture)
+hostarch=${arch}
+def_ver=$(cat /etc/turnkey_version | cut -d'-' -f3,4)
+version=${def_ver}
+inithooks="/root/inithooks.conf"
+
+while true; do
+    case "$1" in
+        -h|--help)      usage; exit 1 ;;
+        -p|--path)      path=$2; shift ;;
+           --rootfs)    rootfs=$2; shift ;;
+        -n|--name)      name=$2; shift ;;
+        -i|--inithooks) inithooks=$2; shift ;;
+        -x|--aptproxy)  aptproxy=$2; shift ;;
+        -a|--arch)      arch=$2; shift ;;
+        -c|--clean)     clean; exit 1 ;;
+        -v|--version)   version=$2; shift ;;
+        --)             app_name=$2; break ;;
+        *)              fatal "unknown argument: $1" ;;
+    esac
+    shift
+done
+
+[ "$(id -u)" != "0" ] && fatal "must be run as root"
+
+[ -z "${app_name}" ]    && fatal "appname not specified"
+[ -z "${arch}" ]        && fatal "architecture not specified"
+[ -z "${version}" ]     && fatal "version not specified"
+[ -z "${path}" ]        && fatal "path parameter is required"
+[ -z "${name}" ]        && fatal "name parameter is required"
+[ -e "${inithooks}" ]   || fatal "inithooks not specified or does not exist"
+
+case "${arch}" in
+     i386)             ;;
+    amd64)             ;;
+      x86)   arch=i386 ;;
+     i686)   arch=i386 ;;
+   x86_64)   arch=amd64 ;;
+        *)   fatal "appliance architecture not supported: ${arch}" ;;
+esac
+
+[ ${hostarch} = "i386" -a ${arch} = "amd64" ] && fatal "can't create ${arch} container on ${hostarch}"
+
+type debootstrap
+[ $? -ne 0 ] && fatal "'debootstrap' command is missing"
+
+case "${version}" in
+    12.[0-1]-squeeze) fatal "turnkey version ${version} is no longer supported:";;
+    13.0-wheezy)      fatal "turnkey version ${version} is no longer supported:";;
+    14.0-wheezy)      fatal "turnkey version ${version} is no longer supported:";;
+    14.[1-9]-jessie)  deb_version="debian-8";;
+    15.[0-9]-stretch) deb_version="debian-9";;
+                   *) fatal "turnkey version ${version} is not recognized:"
+esac
+
+tkl_version=$(echo ${version} | cut -d "-" -f 1)
+deb_release=$(echo ${version} | cut -d "-" -f 2)
+
+valid_releases=('wheezy' 'jessie' 'stretch')
+if [[ ! "${valid_releases[*]}" =~ (^|[^[:alpha:]])${deb_release}([^[:alpha:]]|$) ]]; then
+    echo "Invalid release ${deb_release}, valid ones are: ${valid_releases[*]}"
+    exit 1
+fi
+
+[ ${arch} = "i386" -a ${tkl_version} != "13.0" ] && fatal "can't create ${arch} container with ${version}"
+
+# detect rootfs
+config="${path}/config"
+if [ -z "${rootfs}" ]; then
+    if [ -f "${config}" ]; then
+        if grep -q '^lxc.rootfs' $config 2> /dev/null ; then
+            rootfs=$(awk -F= '/^lxc.rootfs =/{ print $2 }' $config)
+        fi
+    fi
+    rootfs=${rootfs:-${path}/rootfs}
+fi
+
+if [ "${version}" == "13.0-wheezy" ]; then
+    baseurl="${TURNKEY_MIRROR}/images/openvz"
+else
+    baseurl="${TURNKEY_MIRROR}/images/proxmox"
+fi
+
+cache="$LOCALSTATEDIR/cache/lxc/turnkey"
+mkdir -p ${cache}
+
+image=$(get_image_name ${deb_version} ${app_name} ${tkl_version} ${arch})
+
+case "${tkl_version}" in
+    13.0)	signature="${image}.sig";;
+    14.0)	signature="${image}.sig";;
+    14.1)	signature="${image}.sig";;
+       *)	signature="${image}.hash";;
+esac
+
+install_turnkey ${image} ${rootfs}
+[ $? -ne 0 ] && fatal "failed to install turnkey ${app_name}"
+
+configure_debian ${rootfs} ${name}
+[ $? -ne 0 ] && fatal "failed to configure debian for a container"
+
+configure_turnkey ${rootfs} ${inithooks} ${aptproxy}
+[ $? -ne 0 ] && fatal "failed to configure turnkey for a container"
+
+copy_configuration ${path} ${rootfs} ${name} ${arch}
+[ $? -ne 0 ] && fatal "failed write configuration file"
+
+configure_debian_systemd ${path} ${rootfs}
+[ $? -ne 0 ] && fatal "failed to configure systemd"
+
+post_process ${rootfs} ${deb_release} ${arch} ${hostarch}
+[ $? -ne 0 ] && fatal "failed post-processing"
+
+# completed
+exit 0

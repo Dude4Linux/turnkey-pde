@@ -1,0 +1,216 @@
+#!/bin/bash
+
+# lxd-turnkey - Create LXD images for TurnKey GNU/Linux appliances
+#
+# TurnKey LXD Image Manager
+
+# Developed for TurnKey GNU/Linux
+# John Carver <dude4linux@gmail.com>
+
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+
+LOCALSTATEDIR="/var"
+CACHE="$LOCALSTATEDIR/cache/lxc/turnkey"
+BASE="$LOCALSTATEDIR/lib/lxd/containers"
+TMP="/tmp"
+
+info() { echo "INFO [$(basename $0)]: $@"; }
+warn() { echo "WARN [$(basename $0)]: $@" 1>&2; return 1; }
+fatal() { echo "FATAL [$(basename $0)]: $@" 1>&2; exit 1; }
+
+usage() {
+cat <<EOF
+TurnKey LXD Image Manager Syntax: $(basename $0) [options] -- appname
+
+Arguments::
+
+    appname          Appliance name (e.g., core)
+
+Options::
+
+    -h --help        Display this message
+    -a --arch=       Appliance architecture (default: ${HOSTARCH})
+    -v --version=    Appliance version (default: ${VERSION})
+    -i --inithooks=  Path to inithooks.conf (default: /etc/inithooks.conf)
+                     Reference: https://www.turnkeylinux.org/docs/inithooks
+
+Example usage::
+
+    lxd-turnkey -i /etc/inithooks.conf -- core
+
+EOF
+    exit 1
+}
+
+S_OPTS="ha:v:i:"
+L_OPTS="help,arch:,version:,inithooks:"
+OPTIONS=$(getopt -o $S_OPTS -l $L_OPTS -- "$@")
+[ $? -ne 0 ] && usage
+eval set -- "$OPTIONS"
+
+# set defaults
+APP="core"
+ARCH=$(dpkg --print-architecture)
+HOSTARCH=${ARCH}
+VERSION=$(cat /etc/turnkey_version | cut -d "-" -f 3-4)
+INITHOOKS="/etc/inithooks.conf"
+
+while true; do
+    case "$1" in
+        -h|--help)      usage; exit 1 ;;
+        -i|--inithooks) INITHOOKS=$2; shift ;;
+        -a|--arch)      ARCH=$2; shift ;;
+        -v|--version)   VERSION=$2; shift ;;
+        --)             APP=$2; break ;;
+        *)              fatal "unknown argument: $1" ;;
+    esac
+    shift
+done
+
+
+[ -z "${APP}" ]         && fatal "appname not specified"
+[ -z "${ARCH}" ]        && fatal "architecture not specified"
+[ -z "${VERSION}" ]     && fatal "version not specified"
+[ -e "${INITHOOKS}" ]   || fatal "inithooks not specified or does not exist"
+
+# choose a random temporary name for the container
+NAME=$(basename $(mktemp -q ${TMP}/${APP}XXXXXX))
+
+case "${ARCH}" in
+     i386)             ;;
+    amd64)             ;;
+      x86)   ARCH=i386 ;;
+     i686)   ARCH=i386 ;;
+   x86_64)   ARCH=amd64 ;;
+        *)   fatal "appliance architecture not supported: ${ARCH}" ;;
+esac
+
+[ ${HOSTARCH} = "i386" -a ${ARCH} = "amd64" ] && fatal "can't create ${ARCH} container on ${HOSTARCH}"
+
+case "${VERSION}" in
+    12.[0-1]-squeeze) fatal "turnkey version ${VERSION} is no longer supported:";;
+    13.0-wheezy)      fatal "turnkey version ${VERSION} is no longer supported:";;
+    14.0-wheezy)      fatal "turnkey version ${VERSION} is no longer supported:";;
+    14.[1-9]-jessie)  deb_version="debian-8";;
+    15.[0-9]-stretch) deb_version="debian-9";;
+                   *) fatal "turnkey version ${VERSION} is not recognized:"
+esac
+
+tkl_version=$(echo ${VERSION} | cut -d "-" -f 1)
+deb_release=$(echo ${VERSION} | cut -d "-" -f 2)
+
+valid_releases=('jessie' 'stretch')
+if [[ ! "${valid_releases[*]}" =~ (^|[^[:alpha:]])${deb_release}([^[:alpha:]]|$) ]]; then
+    echo "Invalid release ${deb_release}, valid ones are: ${valid_releases[*]}"
+    exit 1
+fi
+
+[ ${ARCH} = "i386" -a ${tkl_version} != "13.0" ] && fatal "can't create ${ARCH} container with ${VERSION}"
+
+# create an LXC container from the TurnKey proxmox images
+
+sudo lxc-create -n ${NAME} -t turnkey -- ${APP} -i ${INITHOOKS}
+[ $? -ne 0 ] && fatal "failed to install turnkey ${APP}"
+
+# convert container to LXD
+
+sudo lxc-to-lxd ${NAME}
+[ $? -ne 0 ] && fatal "failed to convert ${NAME} to LXD"
+
+# add metadata.yaml and templates
+# use TurnKey version as image name 
+IMAGE=$( lxc file pull ${NAME}/etc/turnkey_version - )
+OS="turnkey"
+RELEASE=$(echo ${IMAGE} | cut -d "-" -f 4)
+VARIANT=$(echo ${IMAGE} | cut -d "-" -f 3)
+ARCH=$(echo ${IMAGE} | cut -d "-" -f 5)
+
+CDATE=$(sudo stat -c%Y ${CACHE}/debian-8-${OS}-${APP}_${VARIANT}-1_${ARCH}.tar.gz)
+
+[[ ${ARCH} == "amd64" ]] && ARCH="x86_64"
+
+sudo mkdir -p ${BASE}/${NAME}/templates
+
+cat << EOF | sudo tee ${BASE}/${NAME}/metadata.yaml
+architecture: ${ARCH}
+creation_date: ${CDATE}
+properties:
+  description: "TurnKey GNU/Linux ${APP} Appliance"
+  name: ${IMAGE}
+  os: ${OS}
+  release: ${RELEASE}
+  variant: ${VARIANT}
+templates:
+  /etc/hostname:
+    when:
+      - create
+      - copy
+      - rename
+    template: hostname.tpl
+  /etc/hosts:
+    when:
+      - create
+      - copy
+      - rename
+    template: hosts.tpl
+  /etc/network/interfaces:
+    when:
+      - create
+      - copy
+      - rename
+    template: interfaces.tpl
+EOF
+
+cat << EOF | sudo tee ${BASE}/${NAME}/templates/hostname.tpl
+{{ container.name }}
+EOF
+
+cat << EOF | sudo tee ${BASE}/${NAME}/templates/hosts.tpl
+127.0.0.1   localhost
+127.0.1.1   {{ container.name }}
+
+# The following lines are desirable for IPv6 capable hosts
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+EOF
+
+cat << EOF | sudo tee ${BASE}/${NAME}/templates/interfaces.tpl
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+hostname {{ container.name }}
+EOF
+
+# publish LXD container as image
+
+lxc publish ${NAME} --public --alias ${IMAGE} description="TurnKey ${APP} (${RELEASE}) (${ARCH}) (${CDATE})"
+[ $? -ne 0 ] && fatal "failed to publish image ${IMAGE}"
+
+# cleanup temporary containers
+sudo lxc-destroy -n ${NAME}
+[ $? -ne 0 ] && fatal "failed to destroy LXC container ${NAME}"
+
+lxc delete ${NAME}
+[ $? -ne 0 ] && fatal "failed to delete LXD container ${NAME}"
+
+rm -f ${TMP}/${NAME}
+
+# completed
+exit 0
