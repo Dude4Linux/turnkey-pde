@@ -128,13 +128,14 @@ Push the custom inithooks file into the container.
 ```
 $ lxc file push my_inithooks.conf mautic/etc/inithooks.conf
 ```
-Now start the container, and run turnkey-init.
+Now start the container.
 ```
 $ lxc start mautic
-$ lxc exec mautic turnkey-init
 ```
-The turnkey-init script will ask if you want warning messages forwarded to your admin account. When it finishes, it will display a summary of services, addresses and ports. Press enter to Quit and you will be returned to the host prompt.
-
+The turnkey-init script will run without prompts using the information supplied in inithooks.conf. When it finishes, it will delete the information in inithooks.conf leaving a single character (line-feed).  To determine when initialization is complete, you can monitor the length of inithooks.conf in the container, waiting until it is reduced to a single byte.
+```
+$ until [ $( lxc file pull mautic/etc/inithooks.conf - | wc -c ) -eq 1 ]; do sleep 10; done
+```
 Verify that the container hostname, mautic, can be resolved in the lxd domain.
 ```
 $ host mautic.lxd
@@ -184,10 +185,10 @@ Push the custom inithooks file into the container.
 ```
 $ lxc file push my_inithooks.conf tkldev/etc/inithooks.conf
 ```
-Now start the container, and run turnkey-init.
+Now start the container, and wait for initialization to complete.
 ```
 $ lxc start tkldev
-$ lxc exec tkldev turnkey-init
+$ until [ $( lxc file pull tkldev/etc/inithooks.conf - | wc -c ) -eq 1 ]; do sleep 10; done
 ```
 Enter the container and setup TKLdev.
 ```
