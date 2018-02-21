@@ -7,26 +7,26 @@ The goal of this project is to setup a local development environment for TurnKey
 
 ## Installation:
 
-Make a user directory for development work, or use one you already have. 
-```
+Make a user directory for development work, or use one you already have.
+```bash
 $ mkdir -p ~/devops
 $ cd ~/devops
 ```
 Make a directory for commonly used files.
-```
+```bash
 $ mkdir -p ~/devops/files
 ```
 Clone the TurnKey PDE from github.
-```
+```bash
 $ git clone https://github.com/Dude4Linux/turnkey-pde.git
 $ cd turnkey-pde
 ```
 Run the PDE installation script.
-```
+```bash
 $ ./pde-setup
 ```
 ### Testing LXD:
-```
+```bash
 $ lxc image list
 +-------+-------------+--------+-------------+------+------+-------------+
 | ALIAS | FINGERPRINT | PUBLIC | DESCRIPTION | ARCH | SIZE | UPLOAD DATE |
@@ -70,7 +70,7 @@ $ lxc list
 ### Importing TurnKey Images:
 
 lxc-turnkey is a template script used by lxc-create to download a TurnKey appliance image in proxmox format and create a v.1 lxc container.  LXD no longer uses template scripts but instead manages and publishes images in a new format.  A new script, lxd-turnkey, has been created for the purpose of downloading the TurnKey images and converting them to the LXD image format.  To accomplish this, it must first use the lxc-turnkey script to create a v.1 lxc container.  It then converts to a v.2 lxd container, applies metadata and templates, and then publishes the container as an LXD image.
-```
+```bash
 $ lxd-turnkey --help
 TurnKey LXD Image Manager Syntax: lxd-turnkey [options] -- appname
 
@@ -91,7 +91,7 @@ Example usage::
     lxd-turnkey -i /etc/inithooks.conf -- core
 ```
 Create images for core and lamp.  Note: *sudo* may prompt for your user password midway through the script.
-```
+```bash
 $ lxd-turnkey -- core
 . . .
 $ lxd-turnkey -- lamp
@@ -108,7 +108,7 @@ $ lxc image list
 ### Working with LXD:
 
 Create a new appliance based on LAMP
-```
+```bash
 $ lxc init turnkey-lamp-14.2-jessie-amd64 mautic
 Creating mautic
 
@@ -122,31 +122,31 @@ $ lxc list
 Notice that 'init' creates the new container leaving it stopped, where 'launch' both creates and starts the container. In this case, we want to insert a new inithooks.conf file before starting so we used 'init'.
 
 Make a customized local copy of inithooks.conf in your working directory. We'll call it my_inithooks.conf. Make sure it is owned and executable only by you.
-```
+```bash
 $ sudo cp /etc/inithooks.conf files/my_inithooks.conf
 $ sudo chown USER:USER files/my_inithooks.conf && chmod 0700 files/my_inithooks.conf
 ```
 Next edit my_inithooks.conf and replace the default passwords and settings with your custom values.
 
 Push the custom inithooks file into the container.
-```
+```bash
 $ lxc file push files/my_inithooks.conf mautic/etc/inithooks.conf --uid=0 --gid=0
 ```
 Now start the container.
-```
+```bash
 $ lxc start mautic
 ```
 The turnkey-init script will run without prompts using the information supplied in inithooks.conf. When it finishes, it will delete the information in inithooks.conf leaving a single character (line-feed).  To determine when initialization is complete, you can monitor the length of inithooks.conf in the container, waiting until it is reduced to a single byte.
-```
+```bash
 $ until [ $( lxc file pull mautic/etc/inithooks.conf - | wc -c ) -eq 1 ]; do sleep 10; done
 ```
 Verify that the container hostname, mautic, can be resolved in the lxd domain.
-```
+```bash
 $ host mautic.lxd
 mautic.lxd has address 10.76.85.136
 ```
 Verify that the container is running and that you can login via ssh using the password you specified in my_inithooks.conf.
-```
+```bash
 $ lxc list
 +--------------+---------+---------------------+------+------------+-----------+
 |     NAME     |  STATE  |        IPV4         | IPV6 |    TYPE    | SNAPSHOTS |
@@ -166,7 +166,7 @@ Welcome to Lamp, TurnKey GNU/Linux 14.2 / Debian 8.7 Jessie
 ```
 Connect to the container using the 'exec' command.
 
-```
+```bash
 $ lxc exec mautic /bin/bash
 root@mautic ~# turnkey-version
 turnkey-lamp-14.2-jessie-amd64
@@ -179,21 +179,21 @@ Now customize your new LAMP container installing your desired application, e.g. 
 ### Installing TKLdev
 
 The purpose of the TurnKey Portable Development Environment is to enable running the TKLdev appliance in a container.  This will require additional settings in the container config.  Start by downloading the TKLdev image, then create a container as described above.  Lastly, add security.privileged and security.nesting to the container.  Currently TKLdev must run in a privileged container which presents a security risk.  Make sure to follow security recommendations and protect the use of the TKLdev container.
-```
+```bash
 $ lxd-turnkey -- tkldev
 $ lxc init turnkey-tkldev-14.2-jessie-amd64 tkldev -c security.privileged=true -c security.nesting=true
 ```
 Push the custom inithooks file into the container.
-```
+```bash
 $ lxc file push files/my_inithooks.conf tkldev/etc/inithooks.conf --uid=0 --gid=0
 ```
 Now start the container, and wait for initialization to complete.
-```
+```bash
 $ lxc start tkldev
 $ until [ $( lxc file pull tkldev/etc/inithooks.conf - | wc -c ) -eq 1 ]; do sleep 10; done
 ```
 Enter the container and setup TKLdev.
-```
+```bash
 $ lxc exec tkldev -- /bin/bash
 
 root@tkldev ~# apt-get update --quiet
@@ -201,7 +201,7 @@ root@tkldev ~# apt-get dist-upgrade --quiet --yes
 root@tkldev ~# tkldev-setup
 ```
 Test the functionality by building the core appliance.
-```
+```bash
 root@tkldev ~# cd products/core/
 root@tkldev ~# make
 ```
