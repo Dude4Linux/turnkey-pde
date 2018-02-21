@@ -126,7 +126,7 @@ Next edit my_inithooks.conf and replace the default passwords and settings with 
 
 Push the custom inithooks file into the container.
 ```
-$ lxc file push my_inithooks.conf mautic/etc/inithooks.conf
+$ lxc file push my_inithooks.conf mautic/etc/inithooks.conf --uid=0 --gid=0
 ```
 Now start the container.
 ```
@@ -181,7 +181,7 @@ $ lxc init turnkey-tkldev-14.2-jessie-amd64 tkldev -c security.privileged=true -
 ```
 Push the custom inithooks file into the container.
 ```
-$ lxc file push my_inithooks.conf tkldev/etc/inithooks.conf
+$ lxc file push my_inithooks.conf tkldev/etc/inithooks.conf --uid=0 --gid=0
 ```
 Now start the container, and wait for initialization to complete.
 ```
