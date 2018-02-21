@@ -12,6 +12,10 @@ Make a user directory for development work, or use one you already have.
 $ mkdir -p ~/devops
 $ cd ~/devops
 ```
+Make a directory for commonly used files.
+```
+$ mkdir -p ~/devops/files
+```
 Clone the TurnKey PDE from github.
 ```
 $ git clone https://github.com/Dude4Linux/turnkey-pde.git
@@ -119,14 +123,14 @@ Notice that 'init' creates the new container leaving it stopped, where 'launch' 
 
 Make a customized local copy of inithooks.conf in your working directory. We'll call it my_inithooks.conf. Make sure it is owned and executable only by you.
 ```
-$ sudo cp /etc/inithooks.conf my_inithooks.conf
-$ sudo chown USER:USER my_inithooks.conf && chmod 0700 my_inithooks.conf
+$ sudo cp /etc/inithooks.conf files/my_inithooks.conf
+$ sudo chown USER:USER files/my_inithooks.conf && chmod 0700 files/my_inithooks.conf
 ```
 Next edit my_inithooks.conf and replace the default passwords and settings with your custom values.
 
 Push the custom inithooks file into the container.
 ```
-$ lxc file push my_inithooks.conf mautic/etc/inithooks.conf --uid=0 --gid=0
+$ lxc file push files/my_inithooks.conf mautic/etc/inithooks.conf --uid=0 --gid=0
 ```
 Now start the container.
 ```
@@ -181,7 +185,7 @@ $ lxc init turnkey-tkldev-14.2-jessie-amd64 tkldev -c security.privileged=true -
 ```
 Push the custom inithooks file into the container.
 ```
-$ lxc file push my_inithooks.conf tkldev/etc/inithooks.conf --uid=0 --gid=0
+$ lxc file push files/my_inithooks.conf tkldev/etc/inithooks.conf --uid=0 --gid=0
 ```
 Now start the container, and wait for initialization to complete.
 ```
