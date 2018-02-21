@@ -210,6 +210,6 @@ Enjoy your new development environment.
 
 ### TODO
 
-1. Setup a local apt proxy/cache to minimize the bandwidth used when updating multiple application containers.
+1. Currently, the output of the TKLdev build process is a product.iso.  There is no method of testing the product.iso without having a virtual machine manager such as VirtualBox.  Theoretically, it should be possible to create a v.2 lxd image directly from build/root.patched by applying changes from https://github.com/turnkeylinux/buildtasks, lxc-turnkey, lxc-to-lxd, and lxd-turnkey.  Once we can create and publish a v.2 lxd image from TKLdev, we can then create and test a container using that image.
+2. LXD recommends the use of ZFS for container storage.  Update the pde-setup script to recognize if ZFS is available and if so, configure LXD to use it for default container storage.
 
-2. Currently, the output of the TKLdev build process is a product.iso.  There is no method of testing the product.iso without having a virtual machine manager such as VirtualBox.  Theoretically, it should be possible to create a v.2 lxd image directly from build/root.patched by applying changes from https://github.com/turnkeylinux/buildtasks, lxc-turnkey, lxc-to-lxd, and lxd-turnkey.  Once we can create and publish a v.2 lxd image from TKLdev, we can then create and test a container using that image.
