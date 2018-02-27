@@ -1,6 +1,8 @@
 # Installing TKLdev
 
-The purpose of the TurnKey Portable Development Environment is to enable running the TKLdev appliance in a container.  This will require additional settings in the container config.  Start by downloading the TKLdev image, then create a container as described in README.md.  Lastly, add security.privileged and security.nesting to the container.  Currently TKLdev must run in a privileged container which presents a security risk.  Make sure to follow security recommendations and protect the use of the TKLdev container.
+The purpose of the TurnKey Portable Development Environment is to enable running the TKLdev appliance in a container.  This will require additional settings in the container config.  Start by downloading the TKLdev image, then create a container with the required _security.privileged_ and _security.nesting_.
+
+Currently TKLdev must run in a privileged container which presents a security risk.  Make sure to follow security recommendations and protect the use of the TKLdev container.
 ```bash
   $ lxd-turnkey -- tkldev
   $ lxc init turnkey-tkldev-14.2-jessie-amd64 tkldev -c security.privileged=true -c security.nesting=true
