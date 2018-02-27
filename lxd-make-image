@@ -1,0 +1,490 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# lxd-make-image - Create LXD image from TKLdev build
+
+# Copyright 2018, John Carver <dude4linux@gmail.com>
+  
+  # This program is free software: you can redistribute it and/or modify
+  # it under the terms of the GNU General Public License as published by
+  # the Free Software Foundation, either version 3 of the License, or
+  # (at your option) any later version.
+
+  # This program is distributed in the hope that it will be useful,
+  # but WITHOUT ANY WARRANTY; without even the implied warranty of
+  # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  # GNU General Public License at (http://www.gnu.org/licenses/) for
+  # more details.
+
+# Usage: lxd-make-image [-h|--help] [-d|--debug] [-v|--version]
+
+# Revision history:
+# 2018-02-24 Created by new-script ver. 3.1
+# ---------------------------------------------------------------------------
+
+PROGNAME=${0##*/}
+VERSION="1.0"
+
+BUILD="$(pwd)/build"
+ROOT_PATCHED="${BUILD}/root.patched"
+ROOTFS="${BUILD}/rootfs"
+TEMPLATES="${BUILD}/templates"
+METADATA="${BUILD}/metadata.yaml"
+
+version() { echo -e "$(basename $0) v.${VERSION}"; }
+info()    { echo -e "INFO [$(basename $0)]: $@"; }
+warn()    { echo -e "WARN [$(basename $0)]: $@" 1>&2; return 1; }
+fatal()   { echo -e "FATAL [$(basename $0)]: $@" 1>&2; exit 1; }
+
+download() {
+  [ "$FAB_HTTP_PROXY" ] && PROXY="--proxy $FAB_HTTP_PROXY"
+    curl -sS -L -f --output "$2" $PROXY "$1"
+}
+
+clean_up() { # Perform general housekeeping
+  if deck --isdeck ${ROOTFS}; then deck -D ${ROOTFS}; fi
+  [ -d ${ROOTFS} ] && rm -rf ${ROOTFS}
+  [ -d ${TEMPLATES} ] && rm -rf ${TEMPLATES}
+  [ -f ${METADATA} ] && rm -f ${METADATA}
+  return
+}
+
+error_exit() {
+  echo -e "${PROGNAME}: ${1:-"Unknown Error"}" >&2
+  clean_up
+  exit 1
+}
+
+graceful_exit() {
+  clean_up
+  exit
+}
+
+signal_exit() { # Handle trapped signals
+  case $1 in
+    INT)    error_exit "Program interrupted by user" ;;
+    TERM)   echo -e "\n$PROGNAME: Program terminated" >&2 ; graceful_exit ;;
+    *)      error_exit "$PROGNAME: Terminating on unknown signal" ;;
+  esac
+}
+
+usage() {
+  echo -e "Usage: $PROGNAME [-h|--help] [-d|--debug] [-v|--version]"
+}
+
+help_message() {
+	cat <<- _EOF_
+	$(version)
+	Create LXD image from TKLdev build
+
+	$(usage)
+
+	Options:
+	-h, --help	Display this help message and exit.
+	-d, --debug	Leave rootfs for debugging.
+	-v, --version	Display version and exit.
+
+	NOTE: You must be the superuser to run this script.
+
+	Example:
+	Run from the product's base directory after running make e.g.
+
+	    # cd core
+	    /turnkey/fab/products/core
+	    # make
+	     . . .
+	    # lxd-make-image
+	     . . .
+	    # ls build/
+	     . . .
+
+	_EOF_
+	return
+}
+
+# Trap signals
+trap "signal_exit TERM" TERM HUP
+trap "signal_exit INT"  INT
+
+# Parse command-line
+while [[ -n $1 ]]; do
+	case $1 in
+		-h | --help)	 help_message; exit ;;
+		-d | --debug)	 DEBUG=1; echo "Leave rootfs for debugging." ;;
+		-v | --version)	 version; exit ;;
+		-* | --*)	 usage; error_exit "Unknown option $1" ;;
+		*)		 echo "Argument $1 to process..." ;;
+	esac
+	shift
+done
+
+# Check for root UID
+if [[ $(id -u) != 0 ]]; then
+	error_exit "You must be the superuser to run this script."
+fi
+
+# Main logic
+# lxd-make-image - Create LXD image from TKLdev build
+
+[ -d ${ROOT_PATCHED} ] || fatal "${ROOT_PATCHED} not found. Run make first."
+
+[ -f ${ROOT_PATCHED}/etc/turnkey_version ] || fatal "turnkey_version not found."
+
+# use TurnKey version as image name 
+IMAGE=$( cat ${ROOT_PATCHED}/etc/turnkey_version )
+OS="TurnKey GNU/Linux"
+APP=$(echo ${IMAGE}     | cut -d "-" -f 2)
+RELEASE=$(echo ${IMAGE} | cut -d "-" -f 4)
+VERSION=$(echo ${IMAGE} | cut -d "-" -f 3)
+ARCH=$(echo ${IMAGE}    | cut -d "-" -f 5)
+
+CDATE=$( date +%s )
+
+# check if cleanup needed
+[ -f ${METADATA} -o -d ${TEMPLATES} ] && clean_up
+
+mkdir -p ${TEMPLATES}
+mkdir -p ${ROOTFS}
+
+# use DECK to map rootfs
+if deck --isdeck ${ROOT_PATCHED}; then
+  deck ${ROOT_PATCHED} ${ROOTFS}
+else
+  fatal "${ROOT_PATCHED} is not a deck"
+fi 
+
+# get latest apt package lists
+fab-chroot ${ROOTFS} -- apt-get update
+
+# install required packages
+DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy \
+  -o DPkg::Options::=--force-confdef \
+  -o DPkg::Options::=--force-confold \
+  install --force-yes --no-install-recommends dpkg debian-keyring debian-archive-keyring quota
+
+# install SysVInit and remove SystemD when release is wheezy or jessie
+if [ "${RELEASE}" == "wheezy" -o "${RELEASE}" == "jessie" ]; then
+  DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy \
+    -o DPkg::Options::=--force-confdef \
+    -o DPkg::Options::=--force-confold \
+    install sysvinit-core systemd-shim
+
+  DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy purge systemd-sysv systemd
+fi
+
+# The package, resolvconf, has been removed from previous TurnKey containers.
+# It has proven difficult to remove at this point without issuing a user prompt.
+# If resolvconf causes problems with TurnKey applications,
+# it must be removed upstream e.g. in bootstraps.
+# LXC/LXD images for Debian and Ubuntu contain resolvconf,
+# so removing it is not a requirement of containers.
+
+# remove ntp daemon
+DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy purge ntp
+
+# modprobe doesn't work in containers; always return true
+mv ${ROOTFS}/sbin/modprobe ${ROOTFS}/sbin/modprobe.orig
+fab-chroot ${ROOTFS} -- ln -s /bin/true /sbin/modprobe
+
+# root password is set outside of container
+chmod -x ${ROOTFS}/usr/lib/inithooks/firstboot.d/30rootpass
+
+# redirect inithook output (preseeded headless deployment)
+sed -i '/REDIRECT_OUTPUT/ s/=.*/=true/g' ${ROOTFS}/etc/default/inithooks
+
+# disable selinux in debian
+mkdir -p ${ROOTFS}/selinux
+echo 0 > ${ROOTFS}/selinux/enforce
+
+# remove pointless services in a container, only if they are installed
+cat << EOF | fab-chroot ${ROOTFS} -- 
+[ -f /etc/init.d/checkroot.sh ] && rm /etc/init.d/checkroot.sh; /usr/sbin/update-rc.d -f checkroot.sh remove
+[ -f /etc/init.d/umountfs ] && rm /etc/init.d/umountfs; /usr/sbin/update-rc.d -f umountfs remove
+[ -f /etc/init.d/hwclock.sh ] && rm /etc/init.d/hwclock.sh; /usr/sbin/update-rc.d -f hwclock.sh remove
+[ -f /etc/init.d/hwclockfirst.sh ] && rm /etc/init.d/hwclockfirst.sh; /usr/sbin/update-rc.d -f hwclockfirst.sh remove
+[ -f /etc/init.d/confconsole ] && rm /etc/init.d/confconsole; /usr/sbin/update-rc.d -f confconsole remove
+EOF
+
+# remove kernel files not needed in containers
+KERNEL=$( fab-chroot ${ROOTFS} -- dpkg -l | awk '/linux-image/ { print $2 }' )
+
+# purge any config files from removed packages
+REMOVED=$( fab-chroot ${ROOTFS} -- dpkg -l | awk '/^rc/ {print $2}' )
+DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy purge ${KERNEL} ${REMOVED}
+
+# remove old, unneeded packages
+DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy autoremove --purge
+
+# clear apt cache for smaller image
+DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy clean
+
+# configure the inittab
+cat << EOF > ${ROOTFS}/etc/inittab
+id:2:initdefault:
+si::sysinit:/etc/init.d/rcS
+l0:0:wait:/etc/init.d/rc 0
+l1:1:wait:/etc/init.d/rc 1
+l2:2:wait:/etc/init.d/rc 2
+l3:3:wait:/etc/init.d/rc 3
+l4:4:wait:/etc/init.d/rc 4
+l5:5:wait:/etc/init.d/rc 5
+l6:6:wait:/etc/init.d/rc 6
+# Normally not reached, but fallthrough in case of emergency.
+z6:6:respawn:/sbin/sulogin
+1:2345:respawn:/sbin/getty 38400 console linux
+p6::ctrlaltdel:/sbin/init 6
+p0::powerfail:/sbin/init 0
+EOF
+
+# install inithooks.conf
+cat << EOF > ${ROOTFS}/etc/inithooks.conf
+# documentation: https://www.turnkeylinux.org/docs/inithooks
+
+MASTERPASS=turnkey
+
+export ROOT_PASS=\$MASTERPASS
+export DB_PASS=\$MASTERPASS
+export APP_PASS=\$MASTERPASS
+export APP_EMAIL=admin@example.com
+export APP_DOMAIN=DEFAULT
+export HUB_APIKEY=SKIP
+export SEC_UPDATES=FORCE
+EOF
+
+# ensure inithooks.conf is executable by root
+chmod 0700 ${ROOTFS}/etc/inithooks.conf
+
+# update inithooks/run for containers
+download "https://github.com/turnkeylinux/buildtasks/raw/master/patches/container/overlay/usr/lib/inithooks/run" ${ROOTFS}/usr/lib/inithooks/run
+
+# add generic preseeding of inithooks.conf
+download "https://github.com/turnkeylinux/buildtasks/raw/master/patches/headless/overlay/usr/lib/inithooks/firstboot.d/29preseed" ${ROOTFS}/usr/lib/inithooks/firstboot.d/29preseed
+
+# remove the ntp servers; containers get time from host
+info "disabling ntp servers ..."
+sed -i '/^NTPSERVERS=/ s/".*"/""/' ${ROOTFS}/etc/default/ntpdate
+    
+info "patch container for stunnel"
+CONF=${ROOTFS}/etc/stunnel/stunnel.conf
+if ! sed -n '/^\[shellinabox\]/,/^\[/ p' ${CONF} | grep -q "TIMEOUTclose"
+then
+  info "updating section [shellinabox] ..."
+  sed -ie '/^\[shellinabox\]/,/^\[/ {
+    :a
+    n
+    /./b a
+    i\
+TIMEOUTclose = 0
+  }' ${CONF}
+fi;
+
+if ! sed -n '/^\[webmin\]/,$ p' ${CONF} | grep -q "TIMEOUTclose"
+then
+  info "updating section [webmin] ..."
+  sed -ie '/^\[webmin\]/,$ {
+    $ a\
+TIMEOUTclose = 0
+  }' ${CONF}
+fi;
+
+info "tagging build ..."
+CONF="${ROOTFS}/etc/apt/apt.conf.d/01turnkey"
+echo "Acquire::http::User-Agent \"TurnKey APT-HTTP/1.3 (${IMAGE} lxd)\";" > ${CONF}
+
+## Security Hardening
+# apply changes recommended by Lynis and openVAS
+# these changes can be removed after they have been applied upstream
+
+info "security hardening ..."
+
+# Kernel Hardening
+info "hardening system variables ..."
+cat << EOF > ${ROOTFS}/etc/sysctl.d/90-lynis.conf
+#
+# /etc/sysctl.d/90-lynis.conf - Configuration file
+# for hardening system variables as recommended by Lynis.
+# Settings can be overridden in /etc/sysctl.conf.
+# See /etc/sysctl.d/ for additional system variables.
+# See sysctl.conf (5) for information.
+#
+##############################################################3
+# Harden kernel recommendations by Lynis
+fs.suid_dumpable = 0
+kernel.core_uses_pid = 1
+kernel.dmesg_restrict = 1
+kernel.kptr_restrict = 2
+kernel.sysrq = 0
+
+
+##############################################################3
+# Functions previously found in netbase
+#
+
+# Enable Spoof protection (reverse-path filter)
+# Turn on Source Address Verification in all interfaces to
+# prevent some spoofing attacks
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 1
+
+# Enable TCP/IP SYN cookies
+# See http://lwn.net/Articles/277146/
+# Note: This may impact IPv6 TCP sessions too
+net.ipv4.tcp_syncookies = 1
+
+# Enable packet forwarding for IPv4
+net.ipv4.conf.all.forwarding = 0
+
+# Enable packet forwarding for IPv6
+#  Enabling this option disables Stateless Address Autoconfiguration
+#  based on Router Advertisements for this host
+net.ipv6.conf.all.forwarding = 0
+
+
+###################################################################
+# Additional settings - these settings can improve the network
+# security of the host and prevent against some network attacks
+# including spoofing attacks and man in the middle attacks through
+# redirection. Some network environments, however, require that these
+# settings are disabled so review and enable them as needed.
+#
+# Do not accept ICMP redirects (prevent MITM attacks)
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+#
+# Do not send ICMP redirects (we are not a router)
+net.ipv4.conf.all.send_redirects = 0
+net.ipv6.conf.all.send_redirects = 0
+#
+# Do not accept IP source route packets (we are not a router)
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+#
+# Log Martian Packets
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+#
+# Disable TCP timestamps
+net.ipv4.tcp_timestamps = 0
+#
+EOF
+
+# ssh hardening
+info "hardening ssh ..."
+SSH_DIR="${ROOTFS}/root/.ssh"
+mkdir -p ${SSH_DIR}
+if [ -d ${SSH_DIR} ]; then
+  chmod -R g-rwx,o-rwx ${SSH_DIR}
+fi
+
+CONF="${ROOTFS}/etc/ssh/sshd_config"
+if [ -e ${CONF} ]; then
+  sed -i '{
+    /^UsePrivilegeSeparation/ s/yes/sandbox/
+    /^X11Forwarding/ s/yes/no/
+    /^TCPKeepAlive/ s/yes/no/
+    /^UsePrivilegeSeparation/ a\
+\
+# SSH hardening recommended by lynis\
+AllowTcpForwarding no\
+ClientAliveCountMax 2\
+MaxAuthTries 2\
+MaxSessions 2
+  }'  ${CONF}
+fi
+
+# postfix banner
+CONF="${ROOTFS}/etc/postfix/main.cf"
+if [ -e ${CONF} ]; then
+  info "hardening postfix banner"
+  sed -i '/^smtpd_banner/ s/=.*$/= \$myhostname ESMTP/' ${CONF}
+fi
+
+# Lynis recommendations for umask defaults
+# these changes have been disabled because
+# some old scripts assume the old defaults
+
+# info "hardening umask defaults"
+# CONF="${ROOTFS}/etc/login.defs"
+# if [ -e ${CONF} ]; then
+#   sed -i '/^UMASK/ s/[[:digit:]]\+/027/' ${CONF}
+# fi
+
+# CONF="${ROOTFS}/etc/init.d/rc"
+# if [ -e ${CONF} ]; then
+#   sed -i '/^umask/ s/[[:digit:]]\+/027/' ${CONF}
+# fi
+
+# add metadata.yaml and templates
+info "creating metadata and templates ..."
+
+[[ ${ARCH} == "amd64" ]] && ARCH="x86_64"
+
+# create metadata.yaml
+cat << EOF > ${METADATA}
+architecture: ${ARCH}
+creation_date: ${CDATE}
+properties:
+  architecture: ${ARCH}
+  description: "${OS} ${APP} (${VERSION}) (${RELEASE}) (${ARCH}) (${CDATE})"
+  name: ${IMAGE}
+  os: ${OS}
+  release: ${RELEASE}
+  version: ${VERSION}
+templates:
+  /etc/hostname:
+    when:
+      - create
+      - copy
+      - rename
+    template: hostname.tpl
+  /etc/hosts:
+    when:
+      - create
+      - copy
+      - rename
+    template: hosts.tpl
+  /etc/network/interfaces:
+    when:
+      - create
+      - copy
+      - rename
+    template: interfaces.tpl
+EOF
+
+cat << EOF > ${TEMPLATES}/hostname.tpl
+{{ container.name }}
+EOF
+
+cat << EOF > ${TEMPLATES}/hosts.tpl
+127.0.0.1   localhost
+127.0.1.1   {{ container.name }}
+
+# The following lines are desirable for IPv6 capable hosts
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+EOF
+
+cat << EOF > ${TEMPLATES}/interfaces.tpl
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+hostname {{ container.name }}
+EOF
+
+# if prior image build exists, then remove it
+[ -f ${BUILD}/${IMAGE}.tar.xz ] && rm -f ${BUILD}/${IMAGE}.tar.xz
+
+info "compressing ${IMAGE} image ..."
+tar --warning=no-file-ignored -cJf ${BUILD}/${IMAGE}.tar.xz -C ${BUILD} metadata.yaml templates rootfs
+
+# if DEBUG mode, exit without cleanup
+[[ ${DEBUG} == 1 ]] && exit;
+
+graceful_exit
+
