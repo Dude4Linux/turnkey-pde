@@ -191,6 +191,10 @@ chmod -x ${ROOTFS}/usr/lib/inithooks/firstboot.d/30rootpass
 # redirect inithook output (preseeded headless deployment)
 sed -i '/REDIRECT_OUTPUT/ s/=.*/=true/g' ${ROOTFS}/etc/default/inithooks
 
+# symlink mtab
+[ -e "${ROOTFS}/etc/mtab" ] && rm ${ROOTFS}/etc/mtab
+fab-chroot ${ROOTFS} -- ln -s /proc/self/mounts /etc/mtab
+
 # disable selinux in debian
 mkdir -p ${ROOTFS}/selinux
 echo 0 > ${ROOTFS}/selinux/enforce
