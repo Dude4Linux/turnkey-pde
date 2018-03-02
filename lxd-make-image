@@ -472,12 +472,15 @@ ff02::1 ip6-allnodes
 ff02::2 ip6-allrouters
 EOF
 
-cat << EOF > ${TEMPLATES}/interfaces.tpl
-auto lo
-iface lo inet loopback
+# make template from product /etc/network/interfaces
+cat ${ROOTFS}/etc/network/interfaces > ${TEMPLATES}/interfaces.tpl
 
-auto eth0
-iface eth0 inet dhcp
+# remove hostname, if any
+sed -i '/^hostname/ d' ${TEMPLATES}/interfaces.tpl
+
+# add container name
+cat << EOF >> ${TEMPLATES}/interfaces.tpl
+
 hostname {{ container.name }}
 EOF
 
