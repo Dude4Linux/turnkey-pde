@@ -297,6 +297,10 @@ TIMEOUTclose = 0
   }' ${CONF}
 fi;
 
+# make sure /boot and /lib/modules are present
+[ -d ${ROOTFS}/boot ] || mkdir -p ${ROOTFS}/boot
+[ -d ${ROOTFS}/lib/modules ] || mkdir -p ${ROOTFS}/lib/modules
+
 info "tagging build ..."
 CONF="${ROOTFS}/etc/apt/apt.conf.d/01turnkey"
 echo "Acquire::http::User-Agent \"TurnKey APT-HTTP/1.3 (${IMAGE} lxd)\";" > ${CONF}
