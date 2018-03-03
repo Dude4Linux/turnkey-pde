@@ -272,9 +272,16 @@ fi
 
 CONF="/etc/sysctl.d/90-lynis.conf"
 
+if [ -e ${CONF} -o ${FORCE} = true ]; then
+  info "Removing ${CONF} ..."
+  sudo rm -f ${CONF}
+fi
+
+CONF="/etc/sysctl.d/90-hardening.conf"
+
 if [ ! -e ${CONF} -o ${FORCE} = true ]; then
   info "Creating ${CONF} ..."
-  sudo cp ${BASEDIR}/90-lynis.conf ${CONF}
+  sudo cp ${BASEDIR}/files/90-hardening.conf ${CONF}
   sudo service procps start
 fi
 
