@@ -132,12 +132,13 @@ sudo lxc-to-lxd ${NAME}
 # add metadata.yaml and templates
 # use TurnKey version as image name 
 IMAGE=$( lxc file pull ${NAME}/etc/turnkey_version - )
-OS="turnkey"
+OS="TurnKey GNU/Linux"
+APP=$(echo ${IMAGE}     | cut -d "-" -f 2)
 RELEASE=$(echo ${IMAGE} | cut -d "-" -f 4)
-VARIANT=$(echo ${IMAGE} | cut -d "-" -f 3)
-ARCH=$(echo ${IMAGE} | cut -d "-" -f 5)
+VERSION=$(echo ${IMAGE} | cut -d "-" -f 3)
+ARCH=$(echo ${IMAGE}    | cut -d "-" -f 5)
 
-CDATE=$(sudo stat -c%Y ${CACHE}/debian-8-${OS}-${APP}_${VARIANT}-1_${ARCH}.tar.gz)
+CDATE=$(sudo stat -c%Y ${CACHE}/debian-8-${OS}-${APP}_${VERSION}-1_${ARCH}.tar.gz)
 
 [[ ${ARCH} == "amd64" ]] && ARCH="x86_64"
 
@@ -147,11 +148,12 @@ cat << EOF | sudo tee ${BASE}/${NAME}/metadata.yaml
 architecture: ${ARCH}
 creation_date: ${CDATE}
 properties:
-  description: "TurnKey GNU/Linux ${APP} Appliance"
+  architecture: ${ARCH}
+  description: "${OS} ${APP} (${VERSION}) (${RELEASE}) (${CDATE})"
   name: ${IMAGE}
   os: ${OS}
   release: ${RELEASE}
-  variant: ${VARIANT}
+  version: ${VERSION}
 templates:
   /etc/hostname:
     when:

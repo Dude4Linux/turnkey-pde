@@ -305,7 +305,7 @@ architecture: ${ARCH}
 creation_date: ${CDATE}
 properties:
   architecture: ${ARCH}
-  description: "${OS} ${APP} (${VERSION}) (${RELEASE}) (${ARCH}) (${CDATE})"
+  description: "${OS} ${APP} (${VERSION}) (${RELEASE}) (${CDATE})"
   name: ${IMAGE}
   os: ${OS}
   release: ${RELEASE}
