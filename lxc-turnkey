@@ -15,6 +15,7 @@
 
 # Updated for TurnKey GNU/Linux version 15.0:
 # John Carver <dude4linux@gmail.com>
+# Stefan Davis added version_resolver
 
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -288,7 +289,7 @@ download_image() {
     [ ! -f "${TMP}/${signature}" ] && fatal "signature ${TMP}/${signature} not found"
 
     info "downloading appliance image..."
-    wget --read-timeout=10 -t 3 -nv -c ${baseurl}/${image} -O ${TMP}/${image}
+    wget --read-timeout=10 -t 3 -c ${baseurl}/${image} -O ${TMP}/${image}
     if [ $? -eq 0 ]; then
         verify_signature ${TMP} ${image} ${signature}
         mv ${TMP}/${image} ${cache}/${image}
@@ -374,31 +375,34 @@ TIMEOUTclose = 0
     info "security hardening..."
 
     # Kernel Hardening
-    # LXC containers use the host kernel, therefore changes
-    # to /etc/sysctl.conf in the container are ignored
-    # Kernel hardening must be applied to the host's /etc/sysctl.conf
-
-    # ssh hardening
-    info "hardening ssh..."
-    SSH_DIR="${rootfs}/root/.ssh"
-    if [ -d ${SSH_DIR} ]; then
-      chmod -R g-rwx,o-rwx ${SSH_DIR}
+    if [ -d ${rootfs}/etc/sysctl.d -a ! -f ${rootfs}/etc/sysctl.d/90-hardening.conf ]; then
+      info "hardening system variables..."
+      cp /etc/sysctl.d/90-hardening.conf ${rootfs}/etc/sysctl.d/90-hardening.conf
     fi
 
+    # ssh hardening
+    SSH_DIR="${rootfs}/root/.ssh"
     CONF="${rootfs}/etc/ssh/sshd_config"
-    if [ -e ${CONF} ]; then
-      sed -i '{
-        /^UsePrivilegeSeparation/ s/yes/sandbox/
-        /^X11Forwarding/ s/yes/no/
-        /^TCPKeepAlive/ s/yes/no/
-        /^UsePrivilegeSeparation/ a\
+    if ! grep -q 'SSH hardening' ${CONF} 2> /dev/null ; then
+      info "hardening ssh..."
+      if [ -d ${SSH_DIR} ]; then
+        chmod -R g-rwx,o-rwx ${SSH_DIR}
+      fi
+
+      if [ -e ${CONF} ]; then
+        sed -i '{
+          /^UsePrivilegeSeparation/ s/yes/sandbox/
+          /^X11Forwarding/ s/yes/no/
+          /^TCPKeepAlive/ s/yes/no/
+          /^UsePrivilegeSeparation/ a\
 \
 # SSH hardening recommended by lynis\
 AllowTcpForwarding no\
 ClientAliveCountMax 2\
 MaxAuthTries 2\
 MaxSessions 2
-      }'  ${CONF}
+        }'  ${CONF}
+      fi
     fi
 
     # postfix banner
@@ -406,18 +410,6 @@ MaxSessions 2
     if [ -e ${CONF} ]; then
       info "hardening postfix banner"
       sed -i '/^smtpd_banner/ s/=.*$/= \$myhostname ESMTP/' ${CONF}
-    fi
-
-    # umask defaults
-    info "hardening umask defaults"
-    CONF="${rootfs}/etc/login.defs"
-    if [ -e ${CONF} ]; then
-      sed -i '/^UMASK/ s/[[:digit:]]\+/027/' ${CONF}
-    fi
-
-    CONF="${rootfs}/etc/init.d/rc"
-    if [ -e ${CONF} ]; then
-      sed -i '/^umask/ s/[[:digit:]]\+/027/' ${CONF}
     fi
 
     # Some older images need newer versions of dpkg to support multiarch
@@ -430,7 +422,7 @@ MaxSessions 2
 
     # Remove old, unneeded packages
     DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy autoremove --purge
-    DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy autoclean
+    DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy clean
 }
 
 install_turnkey() {
@@ -600,8 +592,8 @@ eval set -- "$OPTIONS"
 app_name="core"
 arch=$(dpkg --print-architecture)
 hostarch=${arch}
+# set default version for usage display
 def_ver=$(cat /etc/turnkey_version | cut -d'-' -f3,4)
-version=${def_ver}
 inithooks="/root/inithooks.conf"
 
 while true; do
@@ -625,10 +617,11 @@ done
 
 [ -z "${app_name}" ]    && fatal "appname not specified"
 [ -z "${arch}" ]        && fatal "architecture not specified"
-[ -z "${version}" ]     && fatal "version not specified"
+[ -z "${version}" ]     && version=$(version_resolver version $app_name) || fatal "version not specified"
 [ -z "${path}" ]        && fatal "path parameter is required"
 [ -z "${name}" ]        && fatal "name parameter is required"
 [ -e "${inithooks}" ]   || fatal "inithooks not specified or does not exist"
+
 
 case "${arch}" in
      i386)             ;;
