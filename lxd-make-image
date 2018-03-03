@@ -169,6 +169,13 @@ if [ "${RELEASE}" == "wheezy" -o "${RELEASE}" == "jessie" ]; then
     install sysvinit-core systemd-shim
 
   DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy purge systemd-sysv systemd
+
+  # Fix getty-static-service as debootstrap does not install dbus
+  mkdir -p ${ROOTFS}/{lib,etc}/systemd/system
+  mkdir -p ${ROOTFS}/etc/systemd/system/getty.target.wants
+  if [ -e ${ROOTFS}/lib/systemd/system/getty-static.service ] ; then
+    sed 's/ getty@tty[5-9].service//g' ${ROOTFS}/lib/systemd/system/getty-static.service |  sed 's/\(tty2-tty\)[5-9]/\14/g' > ${ROOTFS}/etc/systemd/system/getty-static.service
+  fi
 fi
 
 # The package, resolvconf, has been removed from previous TurnKey containers.
