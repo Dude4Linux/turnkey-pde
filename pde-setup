@@ -117,7 +117,7 @@ else
 fi
 
 # Install required packages
-sudo apt-get install --yes --quiet dnsmasq-base dnsmasq-utils
+sudo apt-get install --yes --quiet dnsmasq-base dnsmasq-utils python-requests
 
 #Note: Ubuntu package dnsmasq was not required.  dnsmasq-base was sufficient.
 #Package dnsmasq-utils may still be helpful.
@@ -267,6 +267,9 @@ EOT
 else
   info "Skipping ${CONF} ..."
 fi
+
+# Install version_resolver courtesy of Stefan Davis
+sudo cp ${BASEDIR}/files/version_resolver /usr/local/bin/version_resolver
 
 # Harden container host using recommendations from lynis and openvas
 
