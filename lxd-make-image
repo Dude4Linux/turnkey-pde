@@ -274,10 +274,10 @@ download "https://github.com/turnkeylinux/buildtasks/raw/master/patches/headless
 info "disabling ntp servers ..."
 sed -i '/^NTPSERVERS=/ s/".*"/""/' ${ROOTFS}/etc/default/ntpdate
     
-info "patch container for stunnel"
 CONF=${ROOTFS}/etc/stunnel/stunnel.conf
 if ! sed -n '/^\[shellinabox\]/,/^\[/ p' ${CONF} | grep -q "TIMEOUTclose"
 then
+  info "patching container for stunnel ..."
   info "updating section [shellinabox] ..."
   sed -ie '/^\[shellinabox\]/,/^\[/ {
     :a
