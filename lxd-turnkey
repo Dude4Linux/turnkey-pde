@@ -189,12 +189,15 @@ ff02::1 ip6-allnodes
 ff02::2 ip6-allrouters
 EOF
 
-cat << EOF | sudo tee ${BASE}/${NAME}/templates/interfaces.tpl
-auto lo
-iface lo inet loopback
+# make template from product /etc/network/interfaces
+lxc file pull ${NAME}/etc/network/interfaces - | sudo tee ${BASE}/${NAME}/templates/interfaces.tpl
 
-auto eth0
-iface eth0 inet dhcp
+# remove hostname, if any
+sudo sed -i '/^hostname/ d' ${BASE}/${NAME}/templates/interfaces.tpl
+
+# add container name
+cat << EOF | sudo tee -a ${BASE}/${NAME}/templates/interfaces.tpl
+
 hostname {{ container.name }}
 EOF
 
