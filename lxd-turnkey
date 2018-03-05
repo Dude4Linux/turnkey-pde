@@ -138,7 +138,8 @@ RELEASE=$(echo ${IMAGE} | cut -d "-" -f 4)
 VERSION=$(echo ${IMAGE} | cut -d "-" -f 3)
 ARCH=$(echo ${IMAGE}    | cut -d "-" -f 5)
 
-CDATE=$(sudo stat -c%Y ${CACHE}/debian-8-${OS}-${APP}_${VERSION}-1_${ARCH}.tar.gz)
+CDATE=$(sudo stat -c%Y ${CACHE}/debian-8-turnkey-${APP}_${VERSION}-1_${ARCH}.tar.gz)
+DESCRIPTION="${OS} ${APP} (${VERSION}) (${RELEASE}) (${CDATE})"
 
 [[ ${ARCH} == "amd64" ]] && ARCH="x86_64"
 
@@ -149,7 +150,7 @@ architecture: ${ARCH}
 creation_date: ${CDATE}
 properties:
   architecture: ${ARCH}
-  description: "${OS} ${APP} (${VERSION}) (${RELEASE}) (${CDATE})"
+  description: ${DESCRIPTION}
   name: ${IMAGE}
   os: ${OS}
   release: ${RELEASE}
@@ -205,15 +206,12 @@ EOF
 
 # publish LXD container as image
 
-lxc publish ${NAME} --public --alias ${IMAGE} description="TurnKey ${APP} (${RELEASE}) (${ARCH}) (${CDATE})"
-[ $? -ne 0 ] && fatal "failed to publish image ${IMAGE}"
+lxc publish ${NAME} --public --alias "${IMAGE}-lxc2" description="${DESCRIPTION}" || fatal "failed to publish image ${IMAGE}"
 
 # cleanup temporary containers
-sudo lxc-destroy -n ${NAME}
-[ $? -ne 0 ] && fatal "failed to destroy LXC container ${NAME}"
+sudo lxc-destroy -n ${NAME} || fatal "failed to destroy LXC container ${NAME}"
 
-lxc delete ${NAME}
-[ $? -ne 0 ] && fatal "failed to delete LXD container ${NAME}"
+lxc delete ${NAME} || fatal "failed to delete LXD container ${NAME}"
 
 rm -f ${TMP}/${NAME}
 
