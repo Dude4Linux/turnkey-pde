@@ -98,17 +98,12 @@ EOF
     # always make sure resolv.conf is up to date in the target
     cp /etc/resolv.conf ${rootfs}/etc/resolv.conf
 
-    # configure the network using the dhcp
-    cat <<EOF > ${rootfs}/etc/network/interfaces
-auto lo
-iface lo inet loopback
+    # set the hostname
+    cat <<EOF >> ${rootfs}/etc/network/interfaces
 
-auto eth0
-iface eth0 inet dhcp
 hostname ${name}
 EOF
 
-    # set the hostname
     cat <<EOF > ${rootfs}/etc/hostname
 ${name}
 EOF
@@ -332,9 +327,9 @@ configure_turnkey() {
     sed -i "s/systemd/sysvinit/g" ${rootfs}/etc/init/cgmanager.conf
     sed -i "s/systemd/sysvinit/g" ${rootfs}/etc/init.d/cgmanager
 
-    info "patch container for stunnel"
     if ! sed -n '/^\[shellinabox\]/,/^\[/ p' ${stunnel_conf} | grep -q "TIMEOUTclose"
     then
+      info "patching container for stunnel..."
       info "updating section [shellinabox]..."
       sed -ie '/^\[shellinabox\]/,/^\[/ {
         :a
@@ -382,21 +377,37 @@ TIMEOUTclose = 0
 
     # ssh hardening
     SSH_DIR="${rootfs}/root/.ssh"
+    SKEL_DIR="${rootfs}/etc/skel/.ssh"
     CONF="${rootfs}/etc/ssh/sshd_config"
     if ! grep -q 'SSH hardening' ${CONF} 2> /dev/null ; then
       info "hardening ssh..."
+      if [ -d ${SKEL_DIR} ]; then
+        chmod -R g-rwx,o-rwx ${SKEL_DIR}
+      else
+        mkdir -m 0700 ${SKEL_DIR}
+      fi
+
       if [ -d ${SSH_DIR} ]; then
         chmod -R g-rwx,o-rwx ${SSH_DIR}
+      else
+        mkdir -m 0700 ${SSH_DIR}
       fi
 
       if [ -e ${CONF} ]; then
         sed -i '{
-          /^UsePrivilegeSeparation/ s/yes/sandbox/
-          /^X11Forwarding/ s/yes/no/
-          /^TCPKeepAlive/ s/yes/no/
-          /^UsePrivilegeSeparation/ a\
+          /^UsePrivilegeSeparation/ d
+          /^X11Forwarding/ d
+          /^TCPKeepAlive/ d
+          /^AllowTcpForwarding/ d
+          /^ClientAliveCountMax/ d
+          /^MaxAuthTries/ d
+          /^MaxSessions/ d
+          /^UseDNS/ a\
 \
 # SSH hardening recommended by lynis\
+UsePrivilegeSeparation sandbox\
+X11Forwarding no\
+TCPKeepAlive no\
 AllowTcpForwarding no\
 ClientAliveCountMax 2\
 MaxAuthTries 2\
@@ -423,6 +434,10 @@ MaxSessions 2
     # Remove old, unneeded packages
     DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy autoremove --purge
     DEBIAN_FRONTEND=noninteractive chroot ${rootfs} apt-get -qy clean
+
+    # Make sure /boot and /lib/modules are present
+    [ -d ${rootfs}/boot ] || mkdir -p ${rootfs}/boot
+    [ -d ${rootfs}/lib/modules ] || mkdir -p ${rootfs}/lib/modules
 }
 
 install_turnkey() {
@@ -560,7 +575,7 @@ Arguments::
 Options::
 
     -a --arch=       Appliance architecture (default: hosts architecture)
-    -v --version=    Appliance version (default: ${def_ver})
+    -v --version=    Appliance version (default: latest available)
     -x --aptproxy=   Address of APT Proxy (e.g., http://192.168.121.1:3142)
 
     -i --inithooks=  Path to inithooks.conf (default: /root/inithooks.conf)
@@ -592,8 +607,6 @@ eval set -- "$OPTIONS"
 app_name="core"
 arch=$(dpkg --print-architecture)
 hostarch=${arch}
-# set default version for usage display
-def_ver=$(cat /etc/turnkey_version | cut -d'-' -f3,4)
 inithooks="/root/inithooks.conf"
 
 while true; do
