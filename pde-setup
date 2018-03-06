@@ -23,7 +23,7 @@
 # ---------------------------------------------------------------------------
 
 PROGNAME=${0##*/}
-BASEDIR=$(dirname $0)
+BASEDIR=$(pwd)
 VERSION="1.0"
 
 info() { echo "INFO [$(basename $0)]: $@"; }
@@ -269,6 +269,7 @@ else
 fi
 
 # Install version_resolver courtesy of Stefan Davis
+info "Installing version_resolver ..."
 sudo cp ${BASEDIR}/files/version_resolver /usr/local/bin/version_resolver
 
 # Harden container host using recommendations from lynis and openvas
@@ -285,8 +286,28 @@ CONF="/etc/sysctl.d/90-hardening.conf"
 if [ ! -e ${CONF} -o ${FORCE} = true ]; then
   info "Creating ${CONF} ..."
   sudo cp ${BASEDIR}/files/90-hardening.conf ${CONF}
-  sudo service procps start
 fi
+
+# Allow packet forwarding in host
+
+CONF="/etc/sysctl.conf"
+
+if ! grep -qs "^# Enable packet forwarding" ${CONF}; then
+  info "Updating /etc/sysctl.conf ..."
+  cat << EOT | sudo tee -a ${CONF}
+# Enable packet forwarding for IPv4
+net.ipv4.conf.all.forwarding = 1
+#
+# Enable packet forwarding for IPv6
+#  Enabling this option disables Stateless Address Autoconfiguration
+#  based on Router Advertisements for this host
+net.ipv6.conf.all.forwarding = 1
+#
+EOT
+fi
+
+# Activate sysctl config changes
+sudo service procps start
 
 # Install AppArmor profiles and utilities.
 
