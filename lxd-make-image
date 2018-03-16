@@ -361,14 +361,13 @@ EOF
 # make template from product /etc/network/interfaces
 cat ${ROOTFS}/etc/network/interfaces > ${TEMPLATES}/interfaces.tpl
 
-# remove hostname, if any
-sed -i '/^hostname/ d' ${TEMPLATES}/interfaces.tpl
+# replace hostname with container name
+sudo sed -i '/^hostname/ c\hostname {{ container.name }}' ${TEMPLATES}/interfaces.tpl
 
-# add container name
-cat << EOF >> ${TEMPLATES}/interfaces.tpl
-
-hostname {{ container.name }}
-EOF
+# add container name if none found
+if ! grep -qc '^hostname' ${TEMPLATES}/interfaces.tpl; then
+  sudo sed -i "/^iface.*dhcp$/,/^$/!b;/^$/i\hostname {{ container.name }}" ${TEMPLATES}/interfaces.tpl
+fi
 
 # if prior image build exists, then remove it
 [ -f ${BUILD}/${IMAGE}.tar.xz ] && rm -f ${BUILD}/${IMAGE}.tar.xz
