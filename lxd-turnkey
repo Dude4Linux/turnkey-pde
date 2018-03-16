@@ -195,14 +195,13 @@ EOF
 # make template from product /etc/network/interfaces
 lxc file pull ${NAME}/etc/network/interfaces - | sudo tee ${BASE}/${NAME}/templates/interfaces.tpl
 
-# remove hostname, if any
-sudo sed -i '/^hostname/ d' ${BASE}/${NAME}/templates/interfaces.tpl
+# replace hostname with container name
+sudo sed -i '/^hostname/ c\hostname {{ container.name }}' ${BASE}/${NAME}/templates/interfaces.tpl
 
-# add container name
-cat << EOF | sudo tee -a ${BASE}/${NAME}/templates/interfaces.tpl
-
-hostname {{ container.name }}
-EOF
+# add container name if none found
+if ! grep -qc '^hostname' ${BASE}/${NAME}/templates/interfaces.tpl; then
+  sudo sed -i "/^iface.*dhcp$/,/^$/!b;/^$/i\hostname {{ container.name }}" ${BASE}/${NAME}/templates/interfaces.tpl
+fi
 
 # publish LXD container as image
 
