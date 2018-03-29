@@ -143,7 +143,9 @@ DESCRIPTION="${OS} ${APP} (${VERSION}) (${RELEASE}) (${CDATE})"
 
 [[ ${ARCH} == "amd64" ]] && ARCH="x86_64"
 
-sudo mkdir -p ${BASE}/${NAME}/templates
+TEMPLATES="${BASE}/${NAME}/templates"
+
+sudo mkdir -p ${TEMPLATES}
 
 cat << EOF | sudo tee ${BASE}/${NAME}/metadata.yaml
 architecture: ${ARCH}
@@ -176,11 +178,11 @@ templates:
     template: interfaces.tpl
 EOF
 
-cat << EOF | sudo tee ${BASE}/${NAME}/templates/hostname.tpl
+cat << EOF | sudo tee ${TEMPLATES}/hostname.tpl
 {{ container.name }}
 EOF
 
-cat << EOF | sudo tee ${BASE}/${NAME}/templates/hosts.tpl
+cat << EOF | sudo tee ${TEMPLATES}/hosts.tpl
 127.0.0.1   localhost
 127.0.1.1   {{ container.name }}
 
@@ -193,14 +195,14 @@ ff02::2 ip6-allrouters
 EOF
 
 # make template from product /etc/network/interfaces
-lxc file pull ${NAME}/etc/network/interfaces - | sudo tee ${BASE}/${NAME}/templates/interfaces.tpl
+lxc file pull ${NAME}/etc/network/interfaces - | sudo tee ${TEMPLATES}/interfaces.tpl
 
 # replace hostname with container name
-sudo sed -i '/^hostname/ c\hostname {{ container.name }}' ${BASE}/${NAME}/templates/interfaces.tpl
+sudo sed -i '/^hostname/ c\hostname {{ container.name }}' ${TEMPLATES}/interfaces.tpl
 
 # add container name if none found
-if ! grep -qc '^hostname' ${BASE}/${NAME}/templates/interfaces.tpl; then
-  sudo sed -i "/^iface.*dhcp$/,/^$/!b;/^$/i\hostname {{ container.name }}" ${BASE}/${NAME}/templates/interfaces.tpl
+if ! sudo grep -qc '^hostname' ${TEMPLATES}/interfaces.tpl; then
+  sudo sed -i "/^iface.*dhcp$/,/^$/!b;/^$/i\hostname {{ container.name }}" ${TEMPLATES}/interfaces.tpl
 fi
 
 # publish LXD container as image
