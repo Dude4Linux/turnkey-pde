@@ -139,6 +139,8 @@ ARCH=$(echo ${IMAGE}    | cut -d "-" -f 5)
 
 CDATE=$( date +%s )
 
+info "making image for ${APP} version ${VERSION} release ${RELEASE} on ${ARCH} ..."
+
 # check if cleanup needed
 [ -f ${METADATA} -o -d ${TEMPLATES} ] && clean_up
 
