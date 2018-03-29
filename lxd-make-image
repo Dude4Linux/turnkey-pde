@@ -362,11 +362,11 @@ EOF
 cat ${ROOTFS}/etc/network/interfaces > ${TEMPLATES}/interfaces.tpl
 
 # replace hostname with container name
-sudo sed -i '/^hostname/ c\hostname {{ container.name }}' ${TEMPLATES}/interfaces.tpl
+sed -i '/^hostname/ c\hostname {{ container.name }}' ${TEMPLATES}/interfaces.tpl
 
 # add container name if none found
 if ! grep -qc '^hostname' ${TEMPLATES}/interfaces.tpl; then
-  sudo sed -i "/^iface.*dhcp$/,/^$/!b;/^$/i\hostname {{ container.name }}" ${TEMPLATES}/interfaces.tpl
+  sed -i "/^iface.*dhcp$/,/^$/!b;/^$/i\hostname {{ container.name }}" ${TEMPLATES}/interfaces.tpl
 fi
 
 # if prior image build exists, then remove it
