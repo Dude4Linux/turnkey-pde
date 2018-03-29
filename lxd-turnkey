@@ -41,8 +41,8 @@ Arguments::
 Options::
 
     -h --help        Display this message
-    -a --arch=       Appliance architecture (default: ${HOSTARCH})
-    -v --version=    Appliance version (default: ${VERSION})
+    -a --arch=       Appliance architecture (default: hosts architecture)
+    -v --version=    Appliance version (default: latest available)
     -i --inithooks=  Path to inithooks.conf (default: /etc/inithooks.conf)
                      Reference: https://www.turnkeylinux.org/docs/inithooks
 
@@ -64,7 +64,6 @@ eval set -- "$OPTIONS"
 APP="core"
 ARCH=$(dpkg --print-architecture)
 HOSTARCH=${ARCH}
-VERSION=$(cat /etc/turnkey_version | cut -d "-" -f 3-4)
 INITHOOKS="/etc/inithooks.conf"
 
 while true; do
@@ -79,6 +78,7 @@ while true; do
     shift
 done
 
+VERSION=${VERSION:=$(sudo version_resolver version ${APP})}
 
 [ -z "${APP}" ]         && fatal "appname not specified"
 [ -z "${ARCH}" ]        && fatal "architecture not specified"
@@ -121,7 +121,7 @@ fi
 
 # create an LXC container from the TurnKey proxmox images
 
-sudo lxc-create -n ${NAME} -t turnkey -- ${APP} -i ${INITHOOKS}
+sudo lxc-create -n ${NAME} -t turnkey -- "${APP}" -a "${ARCH}" -v "${VERSION}" -i "${INITHOOKS}"
 [ $? -ne 0 ] && fatal "failed to install turnkey ${APP}"
 
 # convert container to LXD
