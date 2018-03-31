@@ -132,10 +132,17 @@ fi
 # use TurnKey version as image name 
 IMAGE=$( cat ${ROOT_PATCHED}/etc/turnkey_version )
 OS="TurnKey GNU/Linux"
-APP=$(echo ${IMAGE}     | cut -d "-" -f 2)
-RELEASE=$(echo ${IMAGE} | cut -d "-" -f 4)
-VERSION=$(echo ${IMAGE} | cut -d "-" -f 3)
-ARCH=$(echo ${IMAGE}    | cut -d "-" -f 5)
+if [[ $(echo ${IMAGE} | cut -d "-" -f 6) == "" ]]; then
+  APP=$(echo ${IMAGE}     | cut -d "-" -f 2)
+  RELEASE=$(echo ${IMAGE} | cut -d "-" -f 4)
+  VERSION=$(echo ${IMAGE} | cut -d "-" -f 3)
+  ARCH=$(echo ${IMAGE}    | cut -d "-" -f 5)
+else
+  APP=$(echo ${IMAGE}     | cut -d "-" -f 2)
+  RELEASE=$(echo ${IMAGE} | cut -d "-" -f 5)
+  VERSION=$(echo ${IMAGE} | cut -d "-" -f 3,4)
+  ARCH=$(echo ${IMAGE}    | cut -d "-" -f 6)
+fi
 
 CDATE=$( date +%s )
 
