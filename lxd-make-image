@@ -382,7 +382,7 @@ fi
 [ -f ${BUILD}/${IMAGE}.tar.xz ] && rm -f ${BUILD}/${IMAGE}.tar.xz
 
 info "compressing ${IMAGE} image ..."
-tar --warning=no-file-ignored -cJf ${BUILD}/${IMAGE}.tar.xz -C ${BUILD} metadata.yaml templates rootfs
+tar --warning=no-file-ignored -cJf ${BUILD}/${IMAGE}-lxd.tar.xz -C ${BUILD} metadata.yaml templates rootfs
 
 # if DEBUG mode, exit without cleanup
 [[ ${DEBUG} == 1 ]] && exit;
