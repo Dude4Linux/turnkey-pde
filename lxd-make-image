@@ -25,6 +25,8 @@ PROGNAME=${0##*/}
 VERSION="1.0"
 
 BUILD="$(pwd)/build"
+BOOTSTRAP="${BUILD}/bootstrap"
+ROOT_BUILD="${BUILD}/root.build"
 ROOT_PATCHED="${BUILD}/root.patched"
 ROOTFS="${BUILD}/rootfs"
 TEMPLATES="${BUILD}/templates"
@@ -125,12 +127,24 @@ fi
 # Main logic
 # lxd-make-image - Create LXD image from TKLdev build
 
-[ -d ${ROOT_PATCHED} ] || fatal "${ROOT_PATCHED} not found. Run make first."
+# use DECK to map rootfs
+if deck --isdeck ${ROOT_PATCHED}; then
+  if ! deck --ismounted ${ROOT_PATCHED}; then deck -m ${ROOT_PATCHED}; fi
+  # check if cleanup needed
+  [ -f ${METADATA} -o -d ${TEMPLATES} ] && clean_up
 
-[ -f ${ROOT_PATCHED}/etc/turnkey_version ] || fatal "turnkey_version not found."
+  mkdir -p ${TEMPLATES}
+  mkdir -p ${ROOTFS}
+
+  deck ${ROOT_PATCHED} ${ROOTFS}
+else
+  fatal "${ROOT_PATCHED} is not a deck. Run make first."
+fi
+
+[ -f ${ROOTFS}/etc/turnkey_version ] || fatal "turnkey_version not found."
 
 # use TurnKey version as image name 
-IMAGE=$( cat ${ROOT_PATCHED}/etc/turnkey_version )
+IMAGE=$( cat ${ROOTFS}/etc/turnkey_version )
 OS="TurnKey GNU/Linux"
 if [[ $(echo ${IMAGE} | cut -d "-" -f 6) == "" ]]; then
   APP=$(echo ${IMAGE}     | cut -d "-" -f 2)
@@ -148,27 +162,14 @@ CDATE=$( date +%s )
 
 info "making image for ${APP} version ${VERSION} release ${RELEASE} on ${ARCH} ..."
 
-# check if cleanup needed
-[ -f ${METADATA} -o -d ${TEMPLATES} ] && clean_up
-
-mkdir -p ${TEMPLATES}
-mkdir -p ${ROOTFS}
-
-# use DECK to map rootfs
-if deck --isdeck ${ROOT_PATCHED}; then
-  deck ${ROOT_PATCHED} ${ROOTFS}
-else
-  fatal "${ROOT_PATCHED} is not a deck"
-fi 
-
 # get latest apt package lists
-fab-chroot ${ROOTFS} -- apt-get update
+fab-chroot ${ROOTFS} -- apt-get -q update
 
 # install required packages
 DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy \
   -o DPkg::Options::=--force-confdef \
   -o DPkg::Options::=--force-confold \
-  install --force-yes --no-install-recommends dpkg debian-keyring debian-archive-keyring quota
+  install --no-install-recommends dpkg debian-keyring debian-archive-keyring quota
 
 # install SysVInit and remove SystemD when release is wheezy or jessie
 if [ "${RELEASE}" == "wheezy" -o "${RELEASE}" == "jessie" ]; then
