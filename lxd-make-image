@@ -180,6 +180,24 @@ if [ "${RELEASE}" == "wheezy" -o "${RELEASE}" == "jessie" ]; then
 
   DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy purge systemd-sysv systemd
 
+  # Configure the inittab
+  cat << EOF > ${ROOTFS}/etc/inittab
+id:2:initdefault:
+si::sysinit:/etc/init.d/rcS
+l0:0:wait:/etc/init.d/rc 0
+l1:1:wait:/etc/init.d/rc 1
+l2:2:wait:/etc/init.d/rc 2
+l3:3:wait:/etc/init.d/rc 3
+l4:4:wait:/etc/init.d/rc 4
+l5:5:wait:/etc/init.d/rc 5
+l6:6:wait:/etc/init.d/rc 6
+# Normally not reached, but fallthrough in case of emergency.
+z6:6:respawn:/sbin/sulogin
+1:2345:respawn:/sbin/getty 38400 console linux
+p6::ctrlaltdel:/sbin/init 6
+p0::powerfail:/sbin/init 0
+EOF
+
   # Fix getty-static-service as debootstrap does not install dbus
   mkdir -p ${ROOTFS}/{lib,etc}/systemd/system
   mkdir -p ${ROOTFS}/etc/systemd/system/getty.target.wants
@@ -237,24 +255,6 @@ DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy autoremove --
 
 # clear apt cache for smaller image
 DEBIAN_FRONTEND=noninteractive fab-chroot ${ROOTFS} -- apt-get -qy clean
-
-# configure the inittab
-cat << EOF > ${ROOTFS}/etc/inittab
-id:2:initdefault:
-si::sysinit:/etc/init.d/rcS
-l0:0:wait:/etc/init.d/rc 0
-l1:1:wait:/etc/init.d/rc 1
-l2:2:wait:/etc/init.d/rc 2
-l3:3:wait:/etc/init.d/rc 3
-l4:4:wait:/etc/init.d/rc 4
-l5:5:wait:/etc/init.d/rc 5
-l6:6:wait:/etc/init.d/rc 6
-# Normally not reached, but fallthrough in case of emergency.
-z6:6:respawn:/sbin/sulogin
-1:2345:respawn:/sbin/getty 38400 console linux
-p6::ctrlaltdel:/sbin/init 6
-p0::powerfail:/sbin/init 0
-EOF
 
 # install inithooks.conf
 cat << EOF > ${ROOTFS}/etc/inithooks.conf
