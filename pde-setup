@@ -30,6 +30,7 @@
 PROGNAME=${0##*/}
 BASEDIR=$(pwd)
 VERSION="1.1"
+FORCE=false
 
 version() { echo -e "$(basename $0) v.${VERSION}"; }
 info()    { echo -e "INFO [$(basename $0)]: $@"; }
@@ -98,7 +99,6 @@ done
 # Main logic
 DISTRIBUTOR=$(lsb_release -si)
 CODENAME=$(lsb_release -sc)
-FORCE=false
 
 # Check for Ubuntu
 [[ $DISTRIBUTOR == "Ubuntu" ]] || fatal "Currently only Ubuntu is supported by PDE"
@@ -123,17 +123,25 @@ else
   info "${CONF} not found; skipping enable ${CODENAME}-backports"
 fi
 
+# Add the TurnKey gpg release key to your keyring.
+
+gpg --keyserver hkp://keyserver.ubuntu.com --recv-keys 0xA16EB94D
+
+# Copy the TurnKey gpg release key to /etc/apt/trusted.gpg.d/
+
+sudo wget https://releases.turnkeylinux.org/release-key.txt -O /etc/apt/trusted.gpg.d/turnkey.gpg
+
 # Install required packages
 sudo apt-get install --yes --quiet dnsmasq-base dnsmasq-utils python-requests
 
 #Note: Ubuntu package dnsmasq was not required.  dnsmasq-base was sufficient.
 #Package dnsmasq-utils may still be helpful.
 
-sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
-
 # Install AppArmor profiles and utilities.
-
 sudo apt-get install --yes --quiet apparmor-profiles apparmor-utils
+
+# Install LXC and LXD
+sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
 
 ### Initialize LXD:
 
@@ -145,95 +153,19 @@ lxc network create lxdbr0 \
   ipv6.nat=true
 lxc network attach-profile lxdbr0 default
 
-# Kernel Preparation:
+# Initialize LXC/LXD network vars:
 
-# Edit /etc/default/grub and append 'swapaccount=1' to the GRUB_CMDLINE_LINUX_DEFAULT line so it reads;
-# GRUB_CMDLINE_LINUX_DEFAULT="quiet splash swapaccount=1"
+[ -e /etc/default/lxc-net ] && source /etc/default/lxc-net
 
-CONF="/etc/default/grub"
-if [ -e ${CONF} ]; then
-  grep -q 'GRUB_CMDLINE_LINUX_DEFAULT.*swapaccount=' ${CONF}
-  if [ $? -ne 0 ]; then
-    info "Updating Grub Config"
-    sudo sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/ s/"\(.*\)"/"\1 swapaccount=1"/' ${CONF}
-    sudo update-grub
-  fi
-else
-  info "Skipping Grub Update"
-fi
-
-## Limit dhclient interfaces:
-# By default, dhclient will send DHCP-DISCOVER packets on all available interfaces. Since we will be adding a number of virtual interfaces, none of which will respond to DHCP requests, we will limit dhclient to the ethernet and wifi interfaces.
-
-CONF="/etc/dhcp/dhclient.conf"
-
-if [ -e ${CONF} ]; then
-  grep -q '# limit to interfaces' ${CONF}
-  if [ $? -ne 0 ]; then
-    info "Limiting dhclient interfaces ..."
-    LINKS=$(ip link | awk -F: '$0 !~ "lo|vi|ve|lx|^[^0-9]"{print $2}')
-    echo "# limit to interfaces" | sudo tee -a ${CONF}
-    for i in $LINKS; do
-      echo "interface \"$i\" { }" | sudo tee -a ${CONF}
-    done
-  else
-    info "Skipping dhclient configuration ..."
-  fi
-fi
+export LXD_BRIDGE=$(lxc network list |  awk '/bridge.*\|.*YES/ { print $2 }')
+export LXD_NETWORK=$(lxc network get $LXD_BRIDGE ipv4.address)
+export LXD_ADDR=${LXD_NETWORK%/*}
 
 # Copy the overlay files to the root directory.
 
 sudo cp -ru ${BASEDIR}/overlay/. /
 
-# Add the TurnKey gpg release key to your keyring.
-
-gpg --keyserver hkp://keyserver.ubuntu.com --recv-keys 0xA16EB94D
-
-# Copy the TurnKey gpg release key to /etc/apt/trusted.gpg.d/
-
-sudo wget https://releases.turnkeylinux.org/release-key.txt -O /etc/apt/trusted.gpg.d/turnkey.gpg
-
-# Initialize LXC/LXD network vars:
-
-[ -e /etc/default/lxc-net ] && source /etc/default/lxc-net
-
-LXD_BRIDGE=$(lxc network list |  awk '/bridge.*\|.*YES/ { print $2 }')
-LXD_NETWORK=$(lxc network get $LXD_BRIDGE ipv4.address)
-LXD_ADDR=${LXD_NETWORK%/*}
-
-# Configure DnsMasq:
-
-if [ -d /etc/NetworkManager/dnsmasq.d ]; then
-  CONF="/etc/NetworkManager/dnsmasq.d/dnsmasq.conf"
-else
-  CONF="/etc/dnsmasq.d/dnsmasq.conf"
-fi
-
-if [ ! -e ${CONF} -o ${FORCE} = true ]; then
-  info "Creating ${CONF} ..."
-  cat << EOT | sudo tee ${CONF}
-# Configuration file for dnsmasq.
-# ${CONF}
-#
-bind-interfaces
-user=dnsmasq
-group=dnsmasq
-
-server=/lxd/${LXD_ADDR}
-rev-server=${LXD_NETWORK},${LXD_ADDR}
-server=/lxc/${LXC_ADDR}
-rev-server=${LXC_NETWORK},${LXC_ADDR}
-
-no-poll
-neg-ttl=3600
-cache-size=1000
-dns-forward-max=1000
-
-addn-hosts=/etc/hosts.dnsmasq
-EOT
-else
-  info "Skipping ${CONF} ..."
-fi
+# Remove obsolete conference files
 
 CONF="/etc/sysctl.d/90-lynis.conf"
 
@@ -249,59 +181,14 @@ if [ -e ${CONF} -o ${FORCE} = true ]; then
   sudo rm -f ${CONF}
 fi
 
-# Allow packet forwarding in host
+# Run the conf.d scripts
 
-CONF="/etc/sysctl.conf"
-
-if ! grep -qs "^# Enable packet forwarding" ${CONF}; then
-  info "Updating /etc/sysctl.conf ..."
-  cat << EOT | sudo tee -a ${CONF}
-# Enable packet forwarding for IPv4
-net.ipv4.conf.all.forwarding = 1
-#
-# Enable packet forwarding for IPv6
-#  Enabling this option disables Stateless Address Autoconfiguration
-#  based on Router Advertisements for this host
-net.ipv6.conf.all.forwarding = 1
-#
-EOT
-fi
-
-# Activate sysctl config changes
-sudo service procps start
+run-parts ${BASEDIR}/conf.d
 
 # Activate the apparmor profile.
 sudo apparmor_parser -r -W -T /etc/apparmor.d/lxc-containers
 sudo service apparmor restart
 sudo aa-status
-
-# Edit the default container profile. We use the default profile so we don't have to remember to specify it on the command line.
-
-cat << EOT | lxc profile edit default
-config:
-  raw.lxc: lxc.aa_profile=lxc-default-turnkey
-description: Default LXD profile
-devices:
-  console:
-    path: /dev/console
-    type: unix-char
-  eth0:
-    name: eth0
-    nictype: bridged
-    parent: lxdbr0
-    type: nic
-  fuse:
-    path: /dev/fuse
-    type: unix-char
-  loop0:
-    path: /dev/loop0
-    type: unix-block
-  root:
-    path: /
-    pool: default
-    type: disk
-name: default
-EOT
 
 graceful_exit
 
