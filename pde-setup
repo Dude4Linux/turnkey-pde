@@ -17,6 +17,11 @@
 
 # Usage: pde-setup [-h|--help] [-f|--force] [-v|--version]
 
+# Install version_resolver courtesy of Stefan Davis
+# Harden container host using recommendations from lynis and openvas
+
+# The TurnKey template, lxc-turnkey, requires an inithooks.conf and inserts it into the LXC container before startup.  We will use the inithooks example file because we will be creating sharable images and we don't want to include private passwords.  We put the default inithooks.conf in /etc where it can be read by non-privileged users.
+
 # Revision history:
 # 2018-01-11 Created by new-script ver. 3.1
 # 2018-02-06 Released version 1.0
@@ -91,7 +96,6 @@ while [[ -n $1 ]]; do
 done
 
 # Main logic
-TURNKEY_VERSION="turnkey-lxc-14.2-jessie-amd64"
 DISTRIBUTOR=$(lsb_release -si)
 CODENAME=$(lsb_release -sc)
 FORCE=false
@@ -126,6 +130,10 @@ sudo apt-get install --yes --quiet dnsmasq-base dnsmasq-utils python-requests
 #Package dnsmasq-utils may still be helpful.
 
 sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
+
+# Install AppArmor profiles and utilities.
+
+sudo apt-get install --yes --quiet apparmor-profiles apparmor-utils
 
 ### Initialize LXD:
 
@@ -173,13 +181,9 @@ if [ -e ${CONF} ]; then
   fi
 fi
 
-# Copy the TurnKey GNU/Linux template, lxc-turnkey, to the LXC templates directory.
+# Copy the overlay files to the root directory.
 
-sudo cp ${BASEDIR}/lxc-turnkey /usr/share/lxc/templates/lxc-turnkey
-
-# Copy the lxd-turnkey image manager to /usr/local/bin/.
-
-sudo cp ${BASEDIR}/lxd-turnkey /usr/local/bin/lxd-turnkey
+sudo cp -ru ${BASEDIR}/overlay/. /
 
 # Add the TurnKey gpg release key to your keyring.
 
@@ -188,46 +192,6 @@ gpg --keyserver hkp://keyserver.ubuntu.com --recv-keys 0xA16EB94D
 # Copy the TurnKey gpg release key to /etc/apt/trusted.gpg.d/
 
 sudo wget https://releases.turnkeylinux.org/release-key.txt -O /etc/apt/trusted.gpg.d/turnkey.gpg
-
-# Configure inithooks.conf
-
-# The TurnKey template, lxc-turnkey, requires an inithooks.conf and inserts it into the LXC container before startup.  We will use the inithooks example file because we will be creating sharable images and we don't want to include private passwords.  We put the default inithooks.conf in /etc where it can be read by non-privileged users.
-
-CONF="/etc/inithooks.conf"
-
-if [ ! -e ${CONF} -o ${FORCE} = true ]; then
-  info "Creating ${CONF} ..."
-  sudo cp ${BASEDIR}/inithooks.conf ${CONF}
-fi
-
-# Configure /etc/lxc/default.conf
-
-CONF="/etc/lxc/default.conf"
-
-if [ ! -e ${CONF} -o ${FORCE} = true ]; then
-  info "Creating ${CONF} ..."
-cat << EOT | sudo tee ${CONF}
-# common settings for all containers
-lxc.autodev = 1
-lxc.network.type = veth
-lxc.network.link = lxcbr0
-lxc.network.flags = up
-lxc.network.hwaddr = 00:16:3e:xx:xx:xx
-EOT
-else
-  info "Skipping ${CONF} ..."
-fi
-
-# Set default turnkey version
-
-CONF="/etc/turnkey_version"
-
-if [ ! -e ${CONF} -o ${FORCE} = true ]; then
-  info "Creating ${CONF} ..."
-  echo "${TURNKEY_VERSION}" | sudo tee ${CONF}
-else
-  info "Skipping ${CONF} ..."
-fi
 
 # Initialize LXC/LXD network vars:
 
@@ -271,12 +235,6 @@ else
   info "Skipping ${CONF} ..."
 fi
 
-# Install version_resolver courtesy of Stefan Davis
-info "Installing version_resolver ..."
-sudo cp ${BASEDIR}/files/version_resolver /usr/local/bin/version_resolver
-
-# Harden container host using recommendations from lynis and openvas
-
 CONF="/etc/sysctl.d/90-lynis.conf"
 
 if [ -e ${CONF} -o ${FORCE} = true ]; then
@@ -289,13 +247,6 @@ CONF="/etc/sysctl.d/90-hardening.conf"
 if [ -e ${CONF} -o ${FORCE} = true ]; then
   info "Removing ${CONF} ..."
   sudo rm -f ${CONF}
-fi
-
-CONF="/etc/sysctl.d/10-hardening.conf"
-
-if [ ! -e ${CONF} -o ${FORCE} = true ]; then
-  info "Creating ${CONF} ..."
-  sudo cp ${BASEDIR}/files/10-hardening.conf ${CONF}
 fi
 
 # Allow packet forwarding in host
@@ -319,42 +270,10 @@ fi
 # Activate sysctl config changes
 sudo service procps start
 
-# Install AppArmor profiles and utilities.
-
-sudo apt-get install --yes --quiet apparmor-profiles apparmor-utils
-
-# Create a default apparmor profile for TurnKey containers.
-
-PROFILE="/etc/apparmor.d/lxc/lxc-default-turnkey"
-
-if [ ! -e ${PROFILE} -o ${FORCE} = true ]; then
-  info "Creating ${PROFILE} ..."
-  cat << EOT | sudo tee ${PROFILE} 
-# Do not load this file.  Rather, load /etc/apparmor.d/lxc-containers, which
-# will source all profiles under /etc/apparmor.d/lxc
-
-profile lxc-default-turnkey flags=(attach_disconnected,mediate_deleted,complain) {
-  #include <abstractions/lxc/container-base>
-  #include <abstractions/lxc/start-container>
-
-  deny /dev/.lxc/proc/** rw,
-  deny /dev/.lxc/sys/** rw,
-  mount fstype=proc -> /var/cache/lxc/**,
-  mount fstype=sysfs -> /var/cache/lxc/**,
-  mount fstype=aufs -> /var/cache/lxc/**,
-  mount options=(rw,ro,bind),
-  mount fstype=cgroup -> /sys/fs/cgroup/**,
-}
-EOT
-
 # Activate the apparmor profile.
 sudo apparmor_parser -r -W -T /etc/apparmor.d/lxc-containers
 sudo service apparmor restart
 sudo aa-status
-
-else
-  info "Skipping apparmor profile ${PROFILE} ..."
-fi
 
 # Edit the default container profile. We use the default profile so we don't have to remember to specify it on the command line.
 
