@@ -160,10 +160,17 @@ lxc network attach-profile lxdbr0 default
 export LXD_BRIDGE=$(lxc network list |  awk '/bridge.*\|.*YES/ { print $2 }')
 export LXD_NETWORK=$(lxc network get $LXD_BRIDGE ipv4.address)
 export LXD_ADDR=${LXD_NETWORK%/*}
+export FORCE=${FORCE}
 
 # Copy the overlay files to the root directory.
 
-sudo cp -ru ${BASEDIR}/overlay/. /
+if [ ${FORCE} = true ]; then
+  info "Overwriting overlay files..."
+  sudo cp -rf ${BASEDIR}/overlay/. /
+else
+  info "Copying overlay files..."
+  sudo cp -rn ${BASEDIR}/overlay/. /
+fi
 
 # Remove obsolete conference files
 
