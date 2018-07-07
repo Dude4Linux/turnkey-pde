@@ -144,14 +144,19 @@ sudo apt-get install --yes --quiet apparmor-profiles apparmor-utils
 sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
 
 ### Initialize LXD:
-
 sudo lxd init --auto
-lxc network create lxdbr0 \
-  ipv4.address=auto \
-  ipv4.nat=true \
-  ipv6.address=auto \
-  ipv6.nat=true
-lxc network attach-profile lxdbr0 default
+
+# Create lxd bridged network
+lxc network list | grep -q "lxdbr0"
+if [ ! $? -eq 0 ]; then
+  info "Creating lxd bridged network"
+  lxc network create lxdbr0 \
+    ipv4.address=auto \
+    ipv4.nat=true \
+    ipv6.address=auto \
+    ipv6.nat=true
+  lxc network attach-profile lxdbr0 default
+fi
 
 export UPDATE=${UPDATE}
 
