@@ -1,0 +1,6 @@
+# source this file by adding the following line at the beginning
+# [ -e $(dirname $0)/functions ] && source $(dirname $0)/functions
+version() { echo -e "$(basename $0) v.${VERSION}"; }
+info()    { echo -e "INFO [$(basename $0)]: $@"; }
+warn()    { echo -e "WARN [$(basename $0)]: $@" 1>&2; return 1; }
+fatal()   { echo -e "FATAL [$(basename $0)]: $@" 1>&2; exit 1; }

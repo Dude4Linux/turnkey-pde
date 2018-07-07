@@ -1,4 +1,7 @@
 #!/bin/bash -e
+
+[ -e $(dirname $0)/functions ] && source $(dirname $0)/functions
+
 # Edit the default container profile. We use the default profile so we don't have to remember to specify it on the command line.
 
 cat << EOT | lxc profile edit default

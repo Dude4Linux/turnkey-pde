@@ -2,7 +2,7 @@
 
 # Allow packet forwarding in host
 
-info()    { echo -e "INFO [$(basename $0)]: $@"; }
+[ -e $(dirname $0)/functions ] && source $(dirname $0)/functions
 
 CONF="/etc/sysctl.conf"
 

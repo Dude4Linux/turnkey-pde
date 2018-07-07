@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-info()    { echo -e "INFO [$(basename $0)]: $@"; }
+[ -e $(dirname $0)/functions ] && source $(dirname $0)/functions
 
 # Initialize LXC/LXD network vars:
 
