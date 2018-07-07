@@ -8,7 +8,7 @@ else
   CONF="/etc/dnsmasq.d/dnsmasq.conf"
 fi
 
-if [ ! -e ${CONF} -o ${FORCE} = true ]; then
+if [ ! -e ${CONF} -o ${UPDATE} = true ]; then
   info "Creating ${CONF} ..."
   cat << EOT | sudo tee ${CONF}
 # Configuration file for dnsmasq.

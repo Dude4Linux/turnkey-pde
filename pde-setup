@@ -15,7 +15,7 @@
   # GNU General Public License at (http://www.gnu.org/licenses/) for
   # more details.
 
-# Usage: pde-setup [-h|--help] [-f|--force] [-v|--version]
+# Usage: pde-setup [-h|--help] [-u|--update] [-v|--version]
 
 # Install version_resolver courtesy of Stefan Davis
 # Harden container host using recommendations from lynis and openvas
@@ -30,7 +30,7 @@
 PROGNAME=${0##*/}
 BASEDIR=$(pwd)
 VERSION="1.1"
-FORCE=false
+UPDATE=false
 
 version() { echo -e "$(basename $0) v.${VERSION}"; }
 info()    { echo -e "INFO [$(basename $0)]: $@"; }
@@ -61,7 +61,7 @@ signal_exit() { # Handle trapped signals
 }
 
 usage() {
-  echo -e "Usage: $PROGNAME [-h|--help] [-f|--force] [-v|--version]"
+  echo -e "Usage: $PROGNAME [-h|--help] [-u|--update] [-v|--version]"
 }
 
 help_message() {
@@ -73,7 +73,7 @@ help_message() {
 
 	Options:
 	-h, --help	Display this help message and exit.
-	-f, --force	Force replacement of existing config files
+	-u, --update	Update installed files.
 	-v, --version	Display version and exit.
 
 	_EOF_
@@ -88,7 +88,7 @@ trap "signal_exit INT"  INT
 while [[ -n $1 ]]; do
 	case $1 in
 		-h | --help)	help_message; graceful_exit ;;
-		-f | --force)	FORCE=true; info "Forcing replacement of existing config files" ;;
+		-u | --update)	UPDATE=true; info "Updating installed files ..." ;;
 		-v | --version)	version; exit ;;
 		-* | --*)	usage; error_exit "Unknown option $1" ;;
 		*)		echo "Argument $1 to process ..." ;;
@@ -160,15 +160,15 @@ lxc network attach-profile lxdbr0 default
 export LXD_BRIDGE=$(lxc network list |  awk '/bridge.*\|.*YES/ { print $2 }')
 export LXD_NETWORK=$(lxc network get $LXD_BRIDGE ipv4.address)
 export LXD_ADDR=${LXD_NETWORK%/*}
-export FORCE=${FORCE}
+export UPDATE=${UPDATE}
 
 # Copy the overlay files to the root directory.
 
-if [ ${FORCE} = true ]; then
-  info "Overwriting overlay files..."
+if [ ${UPDATE} = true ]; then
+  info "Overwriting files ..."
   sudo cp -rf ${BASEDIR}/overlay/. /
 else
-  info "Copying overlay files..."
+  info "Copying files ..."
   sudo cp -rn ${BASEDIR}/overlay/. /
 fi
 
@@ -176,14 +176,14 @@ fi
 
 CONF="/etc/sysctl.d/90-lynis.conf"
 
-if [ -e ${CONF} -o ${FORCE} = true ]; then
+if [ -e ${CONF} ]; then
   info "Removing ${CONF} ..."
   sudo rm -f ${CONF}
 fi
 
 CONF="/etc/sysctl.d/90-hardening.conf"
 
-if [ -e ${CONF} -o ${FORCE} = true ]; then
+if [ -e ${CONF} ]; then
   info "Removing ${CONF} ..."
   sudo rm -f ${CONF}
 fi
