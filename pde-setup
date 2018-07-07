@@ -190,12 +190,14 @@ fi
 
 # Run the conf.d scripts
 
-run-parts ${BASEDIR}/conf.d
+run-parts --regex="^[a-zA-Z0-9_-]+$" ${BASEDIR}/conf.d
 
 # Activate the apparmor profile.
 sudo apparmor_parser -r -W -T /etc/apparmor.d/lxc-containers
 sudo service apparmor restart
 sudo aa-status
+
+info "TurnKey GNU/Linux Portable Development Environment is now ready."
 
 graceful_exit
 
