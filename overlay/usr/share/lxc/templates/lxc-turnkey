@@ -528,9 +528,9 @@ EOF
 
     # if there is exactly one veth network entry, make sure it has an
     # associated hwaddr.
-    nics=`grep -e '^lxc\.network\.type[ \t]*=[ \t]*veth' ${path}/config | wc -l`
+    nics=`grep -e '^lxc\.net\.[0-9]\+\.type[ \t]*=[ \t]*veth' ${path}/config | wc -l`
     if [ $nics -eq 1 ]; then
-        grep -q "^lxc.network.hwaddr" ${path}/config || sed -i -e "/^lxc\.network\.type[ \t]*=[ \t]*veth/a lxc.network.hwaddr = 2a:5b:8e:$(openssl rand -hex 3| sed 's/\(..\)/\1:/g; s/.$//')" ${path}/config
+      grep -q "^lxc\.net\.[0-9]\+\.hwaddr" ${path}/config || sed -e "s/^\(lxc\.net\.[0-9]\+\)\(\.type[ \t]*=[ \t]*veth\)$/\1\2\n\1.hwaddr = 2a:5b:8e:$(openssl rand -hex 3| sed 's/\(..\)/\1:/g; s/.$//')/" ${path}/config
     fi
 
     [ ! -f ${path}/config ] && warn "failed to add configuration"
