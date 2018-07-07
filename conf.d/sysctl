@@ -2,6 +2,8 @@
 
 # Allow packet forwarding in host
 
+info()    { echo -e "INFO [$(basename $0)]: $@"; }
+
 CONF="/etc/sysctl.conf"
 
 if ! grep -qs "^# Enable packet forwarding" ${CONF}; then

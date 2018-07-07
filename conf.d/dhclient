@@ -3,6 +3,8 @@
 ## Limit dhclient interfaces:
 # By default, dhclient will send DHCP-DISCOVER packets on all available interfaces. Since we will be adding a number of virtual interfaces, none of which will respond to DHCP requests, we will limit dhclient to the ethernet and wifi interfaces.
 
+info()    { echo -e "INFO [$(basename $0)]: $@"; }
+
 CONF="/etc/dhcp/dhclient.conf"
 
 if [ -e ${CONF} ]; then

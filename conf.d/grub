@@ -1,4 +1,7 @@
 #!/bin/bash -e
+
+info()    { echo -e "INFO [$(basename $0)]: $@"; }
+
 # Kernel Preparation:
 
 # Edit /etc/default/grub and append 'swapaccount=1' to the GRUB_CMDLINE_LINUX_DEFAULT line so it reads;

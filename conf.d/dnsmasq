@@ -1,5 +1,7 @@
 #!/bin/bash -e
 
+info()    { echo -e "INFO [$(basename $0)]: $@"; }
+
 # Initialize LXC/LXD network vars:
 
 [ -e /etc/default/lxc-net ] && source /etc/default/lxc-net
