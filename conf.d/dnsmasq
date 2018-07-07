@@ -1,5 +1,13 @@
 #!/bin/bash -e
 
+# Initialize LXC/LXD network vars:
+
+[ -e /etc/default/lxc-net ] && source /etc/default/lxc-net
+
+LXD_BRIDGE=$(lxc network list |  awk '/bridge.*\|.*YES/ { print $2 }')
+LXD_NETWORK=$(lxc network get $LXD_BRIDGE ipv4.address)
+LXD_ADDR=${LXD_NETWORK%/*}
+
 # Configure DnsMasq:
 
 if [ -d /etc/NetworkManager/dnsmasq.d ]; then

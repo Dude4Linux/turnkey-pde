@@ -153,13 +153,6 @@ lxc network create lxdbr0 \
   ipv6.nat=true
 lxc network attach-profile lxdbr0 default
 
-# Initialize LXC/LXD network vars:
-
-[ -e /etc/default/lxc-net ] && source /etc/default/lxc-net
-
-export LXD_BRIDGE=$(lxc network list |  awk '/bridge.*\|.*YES/ { print $2 }')
-export LXD_NETWORK=$(lxc network get $LXD_BRIDGE ipv4.address)
-export LXD_ADDR=${LXD_NETWORK%/*}
 export UPDATE=${UPDATE}
 
 # Copy the overlay files to the root directory.
