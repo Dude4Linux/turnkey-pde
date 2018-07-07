@@ -107,20 +107,22 @@ CODENAME=$(lsb_release -sc)
 export DEBIAN_FRONTEND=noninteractive
 
 # Enable backports
-CONF="/etc/apt/sources.list"
-if [ -e ${CONF} ]; then
-  info "Enabling ${CODENAME}-backports ..."
-  grep -q "${CODENAME}-backports" ${CONF}
-  if [ $? -eq 0 ]; then
-    # uncomment backports in sources.list
-    sudo sed -i "/${CODENAME}-backports/ s/^[# ]*//" ${CONF}
+if [[ $CODENAME == "xenial" ]]; then
+  CONF="/etc/apt/sources.list"
+  if [ -e ${CONF} ]; then
+    info "Enabling ${CODENAME}-backports ..."
+    grep -q "${CODENAME}-backports" ${CONF}
+    if [ $? -eq 0 ]; then
+      # uncomment backports in sources.list
+      sudo sed -i "/${CODENAME}-backports/ s/^[# ]*//" ${CONF}
+    else
+      # add backports to sources.list
+      sudo sed -i "/\s${CODENAME}\s/{p;s/${CODENAME}/${CODENAME}-backports/}" ${CONF}
+    fi
+    sudo apt-get update --yes --quiet
   else
-    # add backports to sources.list
-    sudo sed -i "/\s${CODENAME}\s/{p;s/${CODENAME}/${CODENAME}-backports/}" ${CONF}
+    info "${CONF} not found; skipping enable ${CODENAME}-backports"
   fi
-  sudo apt-get update --yes --quiet
-else
-  info "${CONF} not found; skipping enable ${CODENAME}-backports"
 fi
 
 # Add the TurnKey gpg release key to your keyring.
@@ -141,7 +143,11 @@ sudo apt-get install --yes --quiet dnsmasq-base dnsmasq-utils python-requests
 sudo apt-get install --yes --quiet apparmor-profiles apparmor-utils
 
 # Install LXC and LXD
-sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
+if [[ $CODENAME == "xenial" ]]; then
+  sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
+else
+  sudo apt-get install --yes --quiet lxc lxd lxd-tools
+fi
 
 ### Initialize LXD:
 sudo lxd init --auto
