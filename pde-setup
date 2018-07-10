@@ -170,10 +170,10 @@ export UPDATE=${UPDATE}
 
 if [ ${UPDATE} = true ]; then
   info "Overwriting files ..."
-  sudo cp -rf ${BASEDIR}/overlay/. /
+  sudo cp --preserve=mode,timestamps -rf ${BASEDIR}/overlay/. /
 else
   info "Copying files ..."
-  sudo cp -rn ${BASEDIR}/overlay/. /
+  sudo cp --preserve=mode,timestamps -rn ${BASEDIR}/overlay/. /
 fi
 
 # Remove obsolete conference files
