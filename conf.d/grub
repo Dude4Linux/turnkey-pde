@@ -14,6 +14,8 @@ if [ -e ${CONF} ]; then
     info "Updating Grub Config"
     sudo sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/ s/"\(.*\)"/"\1 swapaccount=1"/' ${CONF}
     sudo update-grub
+  else
+    info "Skipping Grub Update"
   fi
 else
   info "Skipping Grub Update"
