@@ -27,8 +27,8 @@
 # 2018-02-06 Released version 1.0
 # ---------------------------------------------------------------------------
 
-PROGNAME=${0##*/}
-BASEDIR=$(pwd)
+PROGNAME=$(basename $0)
+BASEDIR=$(dirname $0)
 VERSION="1.1"
 UPDATE=false
 
@@ -37,7 +37,14 @@ info()    { echo -e "INFO [$(basename $0)]: $@"; }
 warn()    { echo -e "WARN [$(basename $0)]: $@" 1>&2; return 1; }
 fatal()   { echo -e "FATAL [$(basename $0)]: $@" 1>&2; exit 1; }
 
+copy() {
+  # copy file from ./overlay to root '/' while changing ownership
+  sudo cp -p ${BASEDIR}/overlay/$1 /$1
+  sudo chown root:root /$1
+}
+
 clean_up() { # Perform pre-exit housekeeping
+  sudo apt-get autoremove --yes --quiet
   return
 }
 
@@ -49,6 +56,7 @@ error_exit() {
 
 graceful_exit() {
   clean_up
+  info "TurnKey GNU/Linux Portable Development Environment is now ready."
   exit
 }
 
@@ -97,6 +105,8 @@ while [[ -n $1 ]]; do
 done
 
 # Main logic
+export UPDATE=${UPDATE}
+
 DISTRIBUTOR=$(lsb_release -si)
 CODENAME=$(lsb_release -sc)
 
@@ -143,38 +153,37 @@ sudo apt-get install --yes --quiet dnsmasq-base dnsmasq-utils python-requests
 sudo apt-get install --yes --quiet apparmor-profiles apparmor-utils
 
 # Install LXC and LXD
+info "Installing LXC/LXD packages ..."
 if [[ $CODENAME == "xenial" ]]; then
   sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
 else
   sudo apt-get install --yes --quiet lxc lxd lxd-tools
 fi
 
-### Initialize LXD:
-sudo lxd init --auto
+# Initial install only
+if [ ! ${UPDATE} = true ]; then
+  ### Initialize LXD:
+  sudo lxd init --auto
 
-# Create lxd bridged network
-lxc network list | grep -q "lxdbr0"
-if [ ! $? -eq 0 ]; then
-  info "Creating lxd bridged network"
-  lxc network create lxdbr0 \
-    ipv4.address=auto \
-    ipv4.nat=true \
-    ipv6.address=auto \
-    ipv6.nat=true
-  lxc network attach-profile lxdbr0 default
+  # Create lxd bridged network
+  lxc network list | grep -q "lxdbr0"
+  if [ ! $? -eq 0 ]; then
+    info "Creating lxd bridged network"
+    lxc network create lxdbr0 \
+      ipv4.address=auto \
+      ipv4.nat=true \
+      ipv6.address=auto \
+      ipv6.nat=true
+    lxc network attach-profile lxdbr0 default
+  fi
 fi
-
-export UPDATE=${UPDATE}
 
 # Copy the overlay files to the root directory.
 
-if [ ${UPDATE} = true ]; then
-  info "Overwriting files ..."
-  sudo cp --preserve=mode,timestamps -rf ${BASEDIR}/overlay/. /
-else
-  info "Copying files ..."
-  sudo cp --preserve=mode,timestamps -rn ${BASEDIR}/overlay/. /
-fi
+info "Copying overlay files ..."
+for file in $(find ./overlay/ -type f -printf '%P\n'); do
+  copy ${file}
+done
 
 # Remove obsolete conference files
 
@@ -194,13 +203,18 @@ fi
 
 # Run the conf.d scripts
 
+info "Running conf.d scripts ..."
 run-parts --regex="^[a-zA-Z0-9_-]+$" ${BASEDIR}/conf.d
 
 # Activate the apparmor profile.
+info "Activating the apparmor profile ..."
 sudo apparmor_parser -r -W -T /etc/apparmor.d/lxc-containers
 sudo service apparmor restart
 
-info "TurnKey GNU/Linux Portable Development Environment is now ready."
+# Restart LXC and LXD
+info "Restarting LXC/LXD ..."
+sudo service lxc restart
+sudo service lxd restart
 
 graceful_exit
 
