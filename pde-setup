@@ -37,6 +37,17 @@ info()    { echo -e "INFO [$(basename $0)]: $@"; }
 warn()    { echo -e "WARN [$(basename $0)]: $@" 1>&2; return 1; }
 fatal()   { echo -e "FATAL [$(basename $0)]: $@" 1>&2; exit 1; }
 
+get_running() {
+  # get list of all lxd containers with state=RUNNING
+  lxc list -c ns --format=csv | awk -F, '/RUNNING/ { print $1 }'
+}
+
+is_running() {
+  # return true (0) if container exists and is running, false (1) otherwise
+  lxc info $1 > /dev/null 2>&1 || warn "Warning: container $1 does not exist."
+  lxc info $1 | grep -qc 'Status: Running'
+}
+
 copy() {
   # copy file from ./overlay to root '/' while changing ownership
   sudo cp -p ${BASEDIR}/overlay/$1 /$1
@@ -113,6 +124,9 @@ CODENAME=$(lsb_release -sc)
 # Check for Ubuntu
 [[ $DISTRIBUTOR == "Ubuntu" ]] || fatal "Currently only Ubuntu is supported by PDE"
 
+# Get running containers
+RUNNING="$(get_running)"
+
 # Enable noninteractive mode
 export DEBIAN_FRONTEND=noninteractive
 
@@ -151,6 +165,12 @@ sudo apt-get install --yes --quiet dnsmasq-base dnsmasq-utils python-requests
 
 # Install AppArmor profiles and utilities.
 sudo apt-get install --yes --quiet apparmor-profiles apparmor-utils
+
+# Stop running containers
+for container in ${RUNNING}; do
+  info "Stopping $container ..."
+  lxc stop $container --force
+done
 
 # Install LXC and LXD
 info "Installing LXC/LXD packages ..."
@@ -215,6 +235,14 @@ sudo service apparmor restart
 info "Restarting LXC/LXD ..."
 sudo service lxc restart
 sudo service lxd restart
+
+# Restart containers if not already running
+for container in ${RUNNING}; do
+  if ! is_running $container; then
+    info "Starting $container ..."
+    lxc start $container
+  fi
+done
 
 graceful_exit
 
