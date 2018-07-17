@@ -1,4 +1,4 @@
-turnkey-pde (1.1) UNRELEASED; urgency=low
+turnkey-pde (1.2) testing; urgency=low
 
   * Initial release (1.0) TurnKey Portable Development Environment
     - LXC and LXD from Ubuntu xenial-backports
@@ -14,4 +14,14 @@ turnkey-pde (1.1) UNRELEASED; urgency=low
     - apt-cacher-ng apt caching proxy for all containers
     - new lxd-make-image for tkldev appliance
 
- -- John Carver <dude4linux@gmail.com>  Sat, 17 Mar 2018 17:58:47 -0500
+     John Carver <dude4linux@gmail.com>  Sat, 17 Mar 2018 17:58:47 -0500
+
+  * Release (1.2)
+    - modularized pde-setup putting files in ./overlay and scripts in ./conf.d
+    - updated to support versions 3.x of LXC and LXD now in xenial-backports
+    - updated to support TurnKey version 15.0 based on Debian stretch
+    - replaced --force option with --update
+    - initialize LXD only during first install
+    - stop containers before update, restart after
+
+ -- John Carver <dude4linux@gmail.com>  Tue, 17 Jul 2018 16:37:52 +0000
