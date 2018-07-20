@@ -177,7 +177,7 @@ done
 # Install LXC and LXD
 info "Installing LXC/LXD packages ..."
 if [[ $CODENAME == "xenial" ]]; then
-  sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools appstream
+  sudo apt-get install --yes --quiet -t xenial-backports lxc lxd lxd-tools aufs-tools
 else
   sudo apt-get install --yes --quiet lxc lxd lxd-tools
 fi
