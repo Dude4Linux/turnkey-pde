@@ -120,14 +120,20 @@ fi
 [ ${ARCH} = "i386" -a ${tkl_version} != "13.0" ] && fatal "can't create ${ARCH} container with ${VERSION}"
 
 # create an LXC container from the TurnKey proxmox images
-
+info "Creating an LXC container for turnkey-${APP} --arch ${ARCH} --version ${VERSION}"
 sudo lxc-create -n ${NAME} -t turnkey -- "${APP}" -a "${ARCH}" -v "${VERSION}" -i "${INITHOOKS}"
 [ $? -ne 0 ] && fatal "failed to install turnkey ${APP}"
 
-# convert container to LXD
+# updating configuration
+info "Updating container configuration"
 
+# convert container to LXD 
+info "Converting container to LXD"
 sudo lxc-to-lxd ${NAME}
 [ $? -ne 0 ] && fatal "failed to convert ${NAME} to LXD"
+
+# convert LXD container to image
+info "Converting LXD container to image"
 
 # add metadata.yaml and templates
 # use TurnKey version as image name 
