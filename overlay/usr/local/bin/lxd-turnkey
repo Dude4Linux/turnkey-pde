@@ -126,10 +126,12 @@ sudo lxc-create -n ${NAME} -t turnkey -- "${APP}" -a "${ARCH}" -v "${VERSION}" -
 
 # updating configuration
 info "Updating container configuration"
+CONFIG="$LOCALSTATEDIR/lib/lxc/${NAME}/config"
+sudo lxc-update-config ${CONFIG}
 
 # convert container to LXD 
 info "Converting container to LXD"
-sudo lxc-to-lxd ${NAME}
+sudo lxc-convert ${NAME}
 [ $? -ne 0 ] && fatal "failed to convert ${NAME} to LXD"
 
 # convert LXD container to image
@@ -144,7 +146,7 @@ RELEASE=$(echo ${IMAGE} | cut -d "-" -f 4)
 VERSION=$(echo ${IMAGE} | cut -d "-" -f 3)
 ARCH=$(echo ${IMAGE}    | cut -d "-" -f 5)
 
-CDATE=$(sudo stat -c%Y ${CACHE}/debian-8-turnkey-${APP}_${VERSION}-1_${ARCH}.tar.gz)
+CDATE=$(sudo stat -c%Y ${CACHE}/${deb_version}-turnkey-${APP}_${VERSION}-1_${ARCH}.tar.gz)
 DESCRIPTION="${OS} ${APP} (${VERSION}) (${RELEASE}) (${CDATE})"
 
 [[ ${ARCH} == "amd64" ]] && ARCH="x86_64"
@@ -213,7 +215,7 @@ fi
 
 # publish LXD container as image
 
-lxc publish ${NAME} --public --alias "${IMAGE}-lxc2" description="${DESCRIPTION}" || fatal "failed to publish image ${IMAGE}"
+lxc publish ${NAME} --public --alias "${IMAGE}-lxd" description="${DESCRIPTION}" || fatal "failed to publish image ${IMAGE}"
 
 # cleanup temporary containers
 sudo lxc-destroy -n ${NAME} || fatal "failed to destroy LXC container ${NAME}"
